@@ -340,7 +340,6 @@ impl ReadMaster{
             },
             Err(e) => {
                 printers::err(format!("Помилка відправки результатів опитування: {:?}", e));
-                panic!()
             }
         }
     }
@@ -680,7 +679,7 @@ where
                         },
 
                         ErrorKind::NetworkDown => {
-                            printers::err(String::from("Упала мережа системи, дропаю додаток"));
+                            printers::err(String::from("Упала мережа системи,"));
                             Err(ModbusReadError::SocketFail)
                         },
 

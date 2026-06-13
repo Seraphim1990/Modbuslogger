@@ -1,7 +1,5 @@
-use std::fmt::format;
 use sqlx::{MySql, Pool};
-use crate::db::schemas::measure::*;
-use crate::db::hasher::hash_unit::HashedValue;
+use crate::messages::requests::measure_request::{HashedValue};
 use crate::logger::printers;
 
 struct ForFlush{

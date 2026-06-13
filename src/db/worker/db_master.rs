@@ -48,7 +48,7 @@ pub async fn run_db_master(rx: mpsc::Receiver<MainMsg>) {
                     Request::GetValue(request) => value_get(&pool,request),
                     Request::GetDecodingType => {}, //TODO
                     Request::GetLogicGroup => {}, //TODO
-                    Request::GetMeasure => {}, //TODO
+                    Request::GetMeasure(measure) => {}, //TODO
                 }
             },
             MainMsg::Event(event) => {

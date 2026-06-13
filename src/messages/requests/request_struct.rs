@@ -3,6 +3,7 @@ use crate::messages::requests::{
     node_request::NodeRequest,
     device_request::DeviceRequest,
     value_request::ValueRequest,
+    measure_request::MeasureRequest,
 };
 
 pub enum Request{
@@ -10,7 +11,7 @@ pub enum Request{
     GetDevice(DeviceRequest),
     GetValue(ValueRequest),
     GetDecodingType,
-    GetMeasure,
+    GetMeasure(MeasureRequest),
 
     GetLogicGroup
 }

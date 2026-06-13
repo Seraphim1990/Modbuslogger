@@ -1,9 +1,4 @@
-#[derive(Clone, Default, sqlx::FromRow)]
-pub struct HashedValue {
-    pub val: f64,
-    pub timestamp: u64,
-}
-
+use crate::messages::requests::measure_request::HashedValue;
 pub struct ValueHasher {
     hashed_values: Vec<HashedValue>,
     size: usize,
@@ -17,9 +12,12 @@ pub struct ValueHasher {
 }
 
 impl ValueHasher {
-    pub fn new(capacity: usize) -> ValueHasher {  // TODO в викликаючому коді також додати ініціалізацію 1-го значення
+    pub fn new(capacity: usize, val: f64, timestamp: u64) -> ValueHasher {
+        let first_value = HashedValue { val, timestamp };
+        let mut hashed_values = vec![HashedValue::default(); capacity];
+        hashed_values.push(first_value);
         ValueHasher {
-            hashed_values: vec![HashedValue::default(); capacity],
+            hashed_values,
             size: 0,
             current: 0,
             capacity,

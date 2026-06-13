@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use crate::logger::printers;
 
 
+
 pub fn decoding_type() -> Router<AppState> {
     Router::new()
         .route("/decoding_type/get_all", get(get_all_decoders))
