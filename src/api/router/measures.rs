@@ -1,205 +1,94 @@
 use axum::{extract::{Path, Query, State}, http::StatusCode, response::{Html, IntoResponse}, routing::{delete, get, post}, Json, Router};
-use chrono::DateTime;
-use chrono::Local;
-use serde::{Deserialize, Serialize};
-use serde_json;
-use crate::db::states::AppState;
+
+use serde::{Deserialize};
+
+use crate::api::init_axum::AppState;
 use crate::logger::printers;
+use tokio::sync::oneshot;
+use crate::messages::requests::{
+    measure_request::{MeasureRequest, MeasureResponse, HashedValue},
+    request_struct::Request
+};
+use crate::api::router::handle_get_request::{check_send_message, handle_get_request};
+use crate::messages::main_msg::MainMsg;
 
 pub fn measures_router() -> Router<AppState> {
     Router::new()
-        .route("/measures/create", post(create_measure))
-        .route("/measures/get_all", get(get_all_measures))
-        .route("/measures/get_by_value_id/:value_id", get(get_by_value_id))
-        .route("/measures/delete/:measure_id", delete(delete_measure))
-        .route("/measures/chart", get(generate_chart))
-}
-
-// --- Моделі ---
-
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Measure {
-    pub id: i64,
-    #[serde(rename = "valueId")]
-    #[sqlx(rename = "valueId")]      // ← ось це не вистачало
-    pub value_id: i32,
-    #[serde(rename = "measureValue")]
-    #[sqlx(rename = "measureValue")] // ← і це
-    pub measure_value: f64,
-    #[serde(rename = "measureTime")]
-    #[sqlx(rename = "measureTime")]  // ← і це
-    pub measure_time: i64,
+        .route("/measure/", get(get_measures))
+        // .route("/measure/chart", get(generate_chart))
 }
 
 #[derive(Debug, Deserialize)]
-pub struct MeasureCreate {
-    #[serde(rename = "valueId")]
-    pub value_id: i32,
-    #[serde(rename = "measureValue")]
-    pub measure_value: f64,
-    #[serde(rename = "measureTime")]
-    pub measure_time: Option<i64>,
+pub struct MeasureQuery {
+    pub value_ids: String,
+    pub start_time: i64,
+    pub end_time: i64,
 }
+impl MeasureQuery {
+    fn to_request(self) -> Result<GetMeasures, String> {
+        let ids: Result<Vec<i32>, _> = self.value_ids
+            .split(',')
+            .map(|s| s.trim().parse::<i32>())
+            .collect();
 
-#[derive(Debug, sqlx::FromRow)]
-struct ValueItem {
-    pub id: i32,
-    pub name: String,
-    pub tag: Option<String>,
-}
+        let ids = match ids {
+            Ok(v) if !v.is_empty() => v,
+            _ => {
+                let msg = "Невірний формат value_ids".to_string();
+                return Err(msg)
+            }
+        };
 
-// --- Хендлери ---
-
-pub async fn get_all_measures(State(state): State<AppState>) -> impl IntoResponse {
-    let measures = sqlx::query_as::<_, Measure>(
-        "SELECT id, valueId, measureValue, measureTime FROM measures"
-    )
-        .fetch_all(&state.pool)
-        .await;
-
-    match measures {
-        Ok(measures) => (StatusCode::OK, Json(measures)).into_response(),
-        Err(e) => {
-            let msg = format!("Помилка читання бази даних, fn get_all_measures:\n{}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
+        Ok(GetMeasures{
+            from: self.start_time,
+            to: self.end_time,
+            values_id: ids
+        })
     }
 }
+#[derive(Debug, Deserialize)]
+struct GetMeasures{
+    from: i64,
+    to: i64,
+    values_id: Vec<i32>,
+}
 
-pub async fn get_by_value_id(
-    State(state): State<AppState>,
-    Path(value_id): Path<i32>,
-) -> impl IntoResponse {
-    // Перевіряємо чи існує value_item
-    let value = sqlx::query_as::<_, ValueItem>(
-        "SELECT id, name, tag FROM value_items WHERE id = ?"
-    )
-        .bind(value_id)
-        .fetch_optional(&state.pool)
-        .await;
+async fn get_measures(State(state): State<AppState>, Query(params): Query<MeasureQuery>) -> impl IntoResponse {
 
-    let value = match value {
-        Ok(Some(v)) => v,
-        Ok(None) => {
-            let msg = format!("value_item з id {} не знайдено", value_id);
-            printers::err(msg.clone());
-            return (StatusCode::NOT_FOUND, msg).into_response();
-        }
-        Err(e) => {
-            let msg = format!("Помилка читання бази даних, fn get_by_value_id:\n{}", e);
-            printers::err(msg.clone());
-            return (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response();
-        }
+    let request = match params.to_request() {
+        Ok(request) => request,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response()
     };
 
-    let measures = sqlx::query_as::<_, Measure>(
-        "SELECT id, valueId, measureValue, measureTime FROM measures WHERE valueId = ?"
-    )
-        .bind(value_id)
-        .fetch_all(&state.pool)
-        .await;
-
-    match measures {
-        Ok(m) if !m.is_empty() => (StatusCode::OK, Json(m)).into_response(),
-        Ok(_) => {
-            let msg = format!("Виміри для value '{}' не знайдено", value.name);
-            (StatusCode::NOT_FOUND, msg).into_response()
+    let (tx, rx) = oneshot::channel();
+    let request = Request::GetMeasure(
+        MeasureRequest{
+            from: request.from,
+            to: request.to,
+            values_id: request.values_id,
+            response_sender: tx
         }
+    );
+    let msg = MainMsg::Request(request);
+    if let Err(e) = check_send_message(&state.from_api, msg).await{
+        return e.into_response();
+    };
+
+    match rx.await {
+        Ok(Ok(res)) => {(StatusCode::OK, Json(res)).into_response()},
+        Ok(Err(_)) => {
+            let msg = "Помилка читання бази данних, детальніше в логах".to_string();
+            printers::err(msg.clone());
+            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+        },
         Err(e) => {
-            let msg = format!("Помилка читання бази даних, fn get_by_value_id:\n{}", e);
+            let msg = format!("Помилка каналу: \n{}", e);
             printers::err(msg.clone());
             (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
         }
     }
 }
-
-pub async fn create_measure(
-    State(state): State<AppState>,
-    Json(payload): Json<MeasureCreate>,
-) -> impl IntoResponse {
-    // Перевіряємо чи існує value_item
-    let value = sqlx::query_as::<_, ValueItem>(
-        "SELECT id, name, tag FROM value_items WHERE id = ?"
-    )
-        .bind(payload.value_id)
-        .fetch_optional(&state.pool)
-        .await;
-
-    match value {
-        Ok(Some(_)) => {}
-        Ok(None) => {
-            let msg = format!("value_item з id {} не знайдено", payload.value_id);
-            printers::err(msg.clone());
-            return (StatusCode::NOT_FOUND, msg).into_response();
-        }
-        Err(e) => {
-            let msg = format!("Помилка читання бази даних, fn create_measure:\n{}", e);
-            printers::err(msg.clone());
-            return (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response();
-        }
-    }
-
-    let res = sqlx::query(
-        "INSERT INTO measures (valueId, measureValue, measureTime) VALUES (?, ?, COALESCE(?, UNIX_TIMESTAMP()))"
-    )
-        .bind(payload.value_id)
-        .bind(payload.measure_value)
-        .bind(payload.measure_time)
-        .execute(&state.pool)
-        .await;
-
-    match res {
-        Ok(r) => {
-            let measure = sqlx::query_as::<_, Measure>(
-                "SELECT id, valueId, measureValue, measureTime FROM measures WHERE id = ?"
-            )
-                .bind(r.last_insert_id())
-                .fetch_one(&state.pool)
-                .await;
-
-            match measure {
-                Ok(m) => (StatusCode::OK, Json(m)).into_response(),
-                Err(e) => {
-                    let msg = format!("Помилка читання після вставки, fn create_measure:\n{}", e);
-                    printers::err(msg.clone());
-                    (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-                }
-            }
-        }
-        Err(e) => {
-            let msg = format!("Помилка створення виміру, fn create_measure:\n{}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
-    }
-}
-
-pub async fn delete_measure(
-    State(state): State<AppState>,
-    Path(measure_id): Path<i64>,
-) -> impl IntoResponse {
-    let res = sqlx::query("DELETE FROM measures WHERE id = ?")
-        .bind(measure_id)
-        .execute(&state.pool)
-        .await;
-
-    match res {
-        Ok(r) if r.rows_affected() > 0 => (StatusCode::OK, "OK").into_response(),
-        Ok(_) => {
-            let msg = format!("Вимір з id {} не знайдено", measure_id);
-            (StatusCode::NOT_FOUND, msg).into_response()
-        }
-        Err(e) => {
-            let msg = format!("Помилка видалення виміру, fn delete_measure:\n{}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
-    }
-}
-
-// --- Графік ---
-
+/*
 #[derive(Debug, Deserialize)]
 pub struct ChartQuery {
     pub value_ids: String,
@@ -398,3 +287,6 @@ fn build_chart_html(datasets: &[serde_json::Value], start_time: i64, end_time: i
 </body>
 </html>"#)
 }
+
+
+ */

@@ -20,9 +20,9 @@ use crate::messages::commands::{
 };
 use crate::reader::reader_loop::reading_loop::read_master_struct::ReadMaster;
 use crate::messages::commands::command::CommandType;
+use crate::messages::config_event::{ConfigEvent, ConfigEventType};
 
-
-pub async fn node_loop(to_controller: mpsc::Sender<MainMsg>, from_controller: broadcast::Receiver<CommandType>, conf: NodeRead) {
+pub async fn node_loop(to_controller: mpsc::Sender<MainMsg>, from_controller: broadcast::Receiver<ConfigEvent>, conf: NodeRead) {
     let mut conf = conf;
     let to_controller = to_controller;
     let mut from_controller = from_controller;
@@ -35,55 +35,19 @@ pub async fn node_loop(to_controller: mpsc::Sender<MainMsg>, from_controller: br
                 msg = from_controller.recv() => {
                     match msg {
                         Ok(msg) => {
-                            match msg {
-                                CommandType::NodeCommand(node_cmd) => {
-                                    match node_cmd.deref() {
-                                                NodeCommand::Update(update_cmd) => {
-                                                    if update_cmd.id == read_master.id() {
-                                                        read_master.change_connecting_config(update_cmd.ip.clone(), update_cmd.port).await;
-                                                    }
-                                                },
-                                                NodeCommand::Delete(delete_cmd) => {
-                                                    if delete_cmd.id == read_master.id() {
-                                                        printers::warn(format!("Закінчення роботи ноди ip: {}", read_master.ip()));
-                                                        return;
-                                                    }
-                                                }
-                                                NodeCommand::Create(_) => {
-                                                    printers::err(String::from("Отримано сигнал NodeCreate в середині робочого таску!"));
-                                                }
-                                            }
+                            match msg.event_type {
+                                ConfigEventType::Update => {
+                                    if msg.data.id == read_master.id(){
+                                        read_master.update(msg.data).await;
+                                    }
+                                }
+                                ConfigEventType::Delete => {
+                                    if msg.data.id == read_master.id() {
+                                        printers::warn(format!("Закінчення роботи ноди ip: {}", read_master.ip()));
+                                        return;
+                                    }
                                 },
-                                CommandType::DeviceCommand(dev_cmd) => {
-                                    match dev_cmd.deref() {
-                                                DeviceCommand::Create(device_create) => {
-                                                    if device_create.parent_node_id == read_master.id() {
-                                                        read_master.add_device().await;
-                                                    }
-                                                },
-                                                DeviceCommand::Delete(device_delete) => {
-                                                    if device_delete.id == read_master.id() {
-                                                        read_master.remove_device(device_delete.id);
-                                                    }
-                                                },
-                                                DeviceCommand::Update(device_update) => {
-                                                    read_master.update_devices(device_update.id).await;
-                                                },
-                                            }
-                                },
-                                CommandType::ValueCommand(value_cmd) => {
-                                    match value_cmd.deref() {
-                                                ValueCommand::Create(value_cmd) => {
-                                                    read_master.value_create(value_cmd.parent_device_id).await;
-                                                },
-                                                ValueCommand::Delete(value_delete) => {
-                                                    read_master.value_delete(value_delete.id).await;
-                                                },
-                                                ValueCommand::Update(value_update) => {
-                                                    read_master.value_update(value_update).await;
-                                                },
-                                            }
-                                },
+                                ConfigEventType::Create => {}
                             }
                         }
                         Err(e) => {
@@ -96,6 +60,6 @@ pub async fn node_loop(to_controller: mpsc::Sender<MainMsg>, from_controller: br
                     read_master.tick().await;
                 }
             }
-        sleep_time = read_master.when_next().max(1);
+        sleep_time = read_master.when_next().max(20); // для чистки стану контексту
     }
 }

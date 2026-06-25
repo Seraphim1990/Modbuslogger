@@ -6,7 +6,7 @@ pub struct ModbusMeasure{
     pub is_logging: bool,
     pub value_id: u32,
     pub tag: Arc<String>,
-    pub measure_time: u64
+    pub measure_time: i64
 }
 
 impl ModbusMeasure{

@@ -28,8 +28,8 @@ impl Default for RegType {
 pub trait ValueInterface {
     fn init(&mut self, settings: String, id: i32, logging: bool) -> Vec<i32>;
     fn find_your_registers(&mut self, dataset: &Vec<i32>) -> bool;
-    fn get_value(&self, reg_list: &Vec<u16>, timestamp: u64) -> ModbusMeasure;
-    fn fail(&self, timestamp: u64) -> ModbusMeasure;
+    fn get_value(&self, reg_list: &Vec<u16>, timestamp: i64) -> ModbusMeasure;
+    fn fail(&self, timestamp: i64) -> ModbusMeasure;
     fn get_type(&self) -> RegType;
 
     fn get_id(&self) -> i32;

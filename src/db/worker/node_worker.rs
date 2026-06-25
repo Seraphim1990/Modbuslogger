@@ -8,8 +8,11 @@ use crate::messages::commands::{
 };
 use crate::logger::printers;
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use crate::messages::config_event::{ConfigEvent, ConfigEventType};
 
-pub fn command_node(pool: &Pool<MySql>, command: Command) {
+pub fn command_node(pool: &Pool<MySql>, command: Command, tx_to_reader: mpsc::Sender<ConfigEvent>) {
     let pool = pool.clone();
     if let CommandType::NodeCommand(node) = command.cmd {
         let tx = command.request_channel;
@@ -19,7 +22,7 @@ pub fn command_node(pool: &Pool<MySql>, command: Command) {
                 tokio::spawn(async move {
                     if let NodeCommand::Delete(node) = node.as_ref() {
                         let node_id = node.id;
-                        let res = delete_node(&pool, node).await;
+                        let res = delete_node(&pool, node, tx_to_reader).await;
                         if tx.send(res).is_err() {
                             let msg = format!("Помилка відправки калбеку NodeCommand::Delete id: {}", node_id);
                             printers::err(msg);
@@ -31,7 +34,7 @@ pub fn command_node(pool: &Pool<MySql>, command: Command) {
                 let node = node.clone();
                 tokio::spawn(async move {
                    if let NodeCommand::Create(node) = node.as_ref() {
-                       let res = create_node(&pool, node).await;
+                       let res = create_node(&pool, node, tx_to_reader).await;
                        if tx.send(res).is_err() {
                            let msg = "Помилка відправки калбеку NodeCommand::Create".to_string();
                            printers::err(msg);
@@ -44,7 +47,7 @@ pub fn command_node(pool: &Pool<MySql>, command: Command) {
                 tokio::spawn(async move {
                     if let NodeCommand::Update(node) = node.as_ref() {
                         let node_id = node.id;
-                        let res = update_node(&pool, node).await;
+                        let res = update_node(&pool, node, tx_to_reader).await;
                         if tx.send(res).is_err() {
                             let msg =  format!("Помилка відправки калбеку NodeCommand::Update id: {}", node_id);
                             printers::err(msg);
@@ -104,7 +107,7 @@ async fn get_all_node(pool: &Pool<MySql>)-> Result<Vec<NodeRead>, ()> {
     Ok(nodes)
 }
 // Get
-async fn get_node_by_id(pool: &Pool<MySql>, id: i32)-> Result<Option<NodeRead>, ()> {
+pub async fn get_node_by_id(pool: &Pool<MySql>, id: i32)-> Result<Option<NodeRead>, ()> {
     let node = sqlx::query_as::<_, NodeRead>("SELECT id, ip, port, description FROM nodes WHERE id = ?")
         .bind(id)
         .fetch_optional(pool)
@@ -131,13 +134,14 @@ async fn get_by_ip(pool: &Pool<MySql>, ip: &String)-> Result<Option<NodeRead>, (
 }
 
 // Del
-async fn delete_node(pool: &Pool<MySql>, node: &NodeDelete) -> Result<(), String> {
+async fn delete_node(pool: &Pool<MySql>, node: &NodeDelete, tx_to_reader: mpsc::Sender<ConfigEvent>) -> Result<(), String> {
 
     let err_closure = |e| {
         let msg = format!("Помилка транзакції при видаленні ноди: {:?}", e);
         printers::err(msg.clone());
         msg
     };
+
 
     let mut tx = pool.begin().await
         .map_err(err_closure)?;
@@ -186,6 +190,14 @@ async fn delete_node(pool: &Pool<MySql>, node: &NodeDelete) -> Result<(), String
         .await
         .map_err(err_closure)?;
 
+    let deleted_node = get_node_by_id(pool, node.id)
+        .await
+        .map_err(|_|{
+            let msg = format!("Помилка видалення ноди: {}", node.id);
+            printers::err(msg.clone());
+            msg
+        })?;
+
     sqlx::query("
         DELETE FROM nodes
         WHERE id = ?;")
@@ -200,7 +212,16 @@ async fn delete_node(pool: &Pool<MySql>, node: &NodeDelete) -> Result<(), String
             printers::err(msg.clone());
             msg
         })?;
-    
+
+    let change_config = ConfigEvent {
+        event_type: ConfigEventType::Delete,
+        data: Arc::new(deleted_node.unwrap())
+    };
+
+    if let Err(e) = tx_to_reader.send(change_config).await {
+        printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+    }
+
     let msg = format!("Видалено ноду по запиту: {:?}", node);
     printers::event(msg);
     Ok(())
@@ -208,7 +229,7 @@ async fn delete_node(pool: &Pool<MySql>, node: &NodeDelete) -> Result<(), String
 
 // Create
 
-async fn create_node(pool: &Pool<MySql>, node: &NodeCreate) -> Result<(), String> {
+async fn create_node(pool: &Pool<MySql>, node: &NodeCreate, tx_to_reader: mpsc::Sender<ConfigEvent>) -> Result<(), String> {
     let ip = &node.ip;
     let _ = ip.parse::<Ipv4Addr>().map_err(|e|{
         let msg = format!("Помилка валідації ip адреси: {:?}", e);
@@ -245,12 +266,24 @@ async fn create_node(pool: &Pool<MySql>, node: &NodeCreate) -> Result<(), String
             msg
         })?;
 
+    if let Ok(Some(node))= get_by_ip(pool, &node.ip).await {
+        let change_config = ConfigEvent {
+            event_type: ConfigEventType::Create,
+            data: Arc::new(node)
+        };
+        if let Err(e) = tx_to_reader.send(change_config).await {
+            printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+        }
+    } else {
+        printers::warn("Помилка отримання ноди для оновлення".to_string());
+    }
+
     let msg = format!("Створено ноду по запиту: {:?}", node);
     printers::event(msg);
     Ok(())
 }
 
-async fn update_node(pool: &Pool<MySql>, node: &NodeUpdate) -> Result<(), String> {
+async fn update_node(pool: &Pool<MySql>, node: &NodeUpdate, tx_to_reader: mpsc::Sender<ConfigEvent>) -> Result<(), String> {
 
     let _ = sqlx::query_as::<_, NodeRead>("SELECT id, ip, port, description FROM nodes WHERE id = ?")
         .bind(node.id)
@@ -308,6 +341,16 @@ async fn update_node(pool: &Pool<MySql>, node: &NodeUpdate) -> Result<(), String
             printers::err(msg.clone());
             msg
         })?;
+
+    if let Ok(Some(node))= get_node_by_id(pool, node.id).await {
+        let change_config = ConfigEvent {
+            event_type: ConfigEventType::Update,
+            data: Arc::new(node)
+        };
+        if let Err(e) = tx_to_reader.send(change_config).await {
+            printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+        }
+    }
 
     let msg = format!("Оновлено ноду по запиту: {:?}", node);
     printers::event(msg);

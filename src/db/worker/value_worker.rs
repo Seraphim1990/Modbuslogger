@@ -1,13 +1,17 @@
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use std::sync::Arc;
 use crate::messages::requests::value_request::*;
 use crate::db::schemas::value_unit::{ValueCreate, ValueDelete, ValueRead, ValueUpdate};
 use crate::logger::printers;
-use sqlx::{MySql, Pool};
+use sqlx::{FromRow, MySql, Pool, Transaction};
+use tokio::sync::mpsc;
+use crate::db::schemas::node::NodeRead;
+use crate::db::worker::node_worker::get_node_by_id;
 use crate::messages::commands::command::{Command, CommandType};
 use crate::messages::commands::value::ValueCommand;
+use crate::messages::config_event::{ConfigEvent, ConfigEventType};
+use crate::reader::reader_loop::decoding_plugins::plugin_loader::check_json;
 
-pub fn command_value(pool: &Pool<MySql>, command: Command) {
+pub fn command_value(pool: &Pool<MySql>, command: Command, tx_to_reader: mpsc::Sender<ConfigEvent>) {
     let pool = pool.clone();
 
     if let CommandType::ValueCommand(value) = command.cmd {
@@ -17,7 +21,7 @@ pub fn command_value(pool: &Pool<MySql>, command: Command) {
                 let value = value.clone();
                 tokio::spawn(async move {
                     if let ValueCommand::Create(value) = value.as_ref() {
-                        let res = create_value(&pool, value).await;
+                        let res = create_value(&pool, value, tx_to_reader).await;
                         if tx.send(res).is_err() {
                             let msg = "Помилка відправки калбеку для ValueCommand::Create".to_string();
                             printers::err(msg);
@@ -29,7 +33,7 @@ pub fn command_value(pool: &Pool<MySql>, command: Command) {
                 let value = value.clone();
                 tokio::spawn(async move {
                    if let ValueCommand::Delete(value) = value.as_ref() {
-                       let res = delete_value(&pool, value).await;
+                       let res = delete_value(&pool, value, tx_to_reader).await;
                        if tx.send(res).is_err() {
                            let msg = format!("Помилка відправки калбеку для ValueCommand::Delete id: {}", value.id);
                            printers::err(msg);
@@ -41,7 +45,7 @@ pub fn command_value(pool: &Pool<MySql>, command: Command) {
                 let value = value.clone();
                 tokio::spawn(async move {
                     if let ValueCommand::Update(value) = value.as_ref() {
-                        let res = value_update(&pool, value).await;
+                        let res = value_update(&pool, value, tx_to_reader).await;
                         if tx.send(res).is_err() {
                             let msg = format!("Помилка відправки калбеку для ValueCommand::Update id: {}", value.id);
                             printers::err(msg);
@@ -131,7 +135,7 @@ async fn get_value_by_id(pool: &Pool<MySql>, id: i32) -> Result<Option<ValueRead
     }
 }
 
-async fn get_value_by_device_id(pool: &Pool<MySql>, id: i32) -> Result<Vec<ValueRead>, ()> {
+pub async fn get_value_by_device_id(pool: &Pool<MySql>, id: i32) -> Result<Vec<ValueRead>, ()> {
     let values = sqlx::query_as::<_, ValueRead>(
         "SELECT id,
        parent_device_id,
@@ -204,24 +208,73 @@ async fn get_logging_only(pool: &Pool<MySql>) -> Result<Vec<ValueRead>, ()> {
     }
 }
 
-async fn delete_value(pool: &Pool<MySql>, value: &ValueDelete) -> Result<(), String> {
-    let res = sqlx::query("DELETE FROM value_units WHERE id = ?")
-        .bind(value.id)
-        .execute(pool)
+pub async fn delete_value_with_transaction(conn: &mut sqlx::MySqlConnection, id: i32) -> Result<(), String> {
+    sqlx::query("Delete FROM measures WHERE value_id = ?")
+        .bind(id)
+        .execute(&mut *conn)
         .await
         .map_err(|e|{
-            let msg = format!("Помилка видалення значення id: {} \n{}", value.id, &e);
+            let msg = format!("Помилка видалення збережених вимірів id: {} \n{}", id, &e);
             printers::err(msg.clone());
             msg
         })?;
 
-    let msg = format!("Видалено значення : {:?}", value);
-    printers::event(msg);
-
+    sqlx::query("DELETE FROM value_units WHERE id = ?")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e|{
+            let msg = format!("Помилка видалення значення id: {} \n{}", id, &e);
+            printers::err(msg.clone());
+            msg
+        })?;
     Ok(())
 }
 
-async fn create_value(pool: &Pool<MySql>, value: &ValueCreate) -> Result<(), String> {
+async fn delete_value(pool: &Pool<MySql>, value: &ValueDelete, tx_to_reader: mpsc::Sender<ConfigEvent>) -> Result<(), String> {
+
+    let deleted_value_old = if let Ok(Some(value)) = get_value_by_id(pool, value.id).await {
+        value
+    } else {
+        let msg = "Помилка читання значення при видаленні".to_string();
+        printers::err(msg.clone());
+        return Err(msg);
+    };
+
+    let mut tx = pool.begin().await.map_err(|e| {
+        let msg = format!("Помилка створення батчу при видаленні значення \n{}", &e);
+        printers::err(msg.clone());
+        msg
+    })?;
+
+    delete_value_with_transaction(&mut tx, value.id).await?;
+
+    tx.commit().await.map_err(|e| {
+        let msg = format!("Помилка коміту транзакції при видаленні значення id: {} \n{}", value.id, &e);
+        printers::err(msg.clone());
+        msg
+    })?;
+
+    if let Ok(node)= get_node_directly_by_device_id(pool, deleted_value_old.parent_device_id).await {
+        let change_config = ConfigEvent {
+            event_type: ConfigEventType::Update,
+            data: Arc::new(node)
+        };
+        if let Err(e) = tx_to_reader.send(change_config).await {
+            printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+        }
+    } else {
+        printers::warn("Помилка отримання ноди для оновлення".to_string());
+    }
+
+    let msg = format!("Видалено значення : {:?}", value);
+    printers::event(msg);
+    Ok(())
+}
+
+async fn create_value(pool: &Pool<MySql>, value: &ValueCreate, tx_to_reader: mpsc::Sender<ConfigEvent>) -> Result<(), String> {
+
+    check_json(value.decoding_type, &value.settings.clone().to_string())?;
 
     let dev = sqlx::query("SELECT id FROM devices WHERE id = ? AND deleted = 0")
         .bind(value.parent_device_id)
@@ -256,15 +309,40 @@ async fn create_value(pool: &Pool<MySql>, value: &ValueCreate) -> Result<(), Str
             msg
         })?;
 
+    if let Ok(node)= get_node_directly_by_device_id(pool, value.parent_device_id).await {
+        let change_config = ConfigEvent {
+            event_type: ConfigEventType::Update,
+            data: Arc::new(node)
+        };
+        if let Err(e) = tx_to_reader.send(change_config).await {
+            printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+        }
+    } else {
+        printers::warn("Помилка отримання ноди для оновлення".to_string());
+    }
+
     let msg = format!("Створено значення : {:?}", value);
     printers::event(msg);
 
     Ok(())
 }
+#[derive(Debug, FromRow)]
+struct ReadVal{
+    id: i32,
+    decoding_type: i32
+}
 
-async fn value_update(pool: &Pool<MySql>, value: &ValueUpdate) -> Result<(), String> {
+async fn value_update(pool: &Pool<MySql>, value: &ValueUpdate, tx_to_reader: mpsc::Sender<ConfigEvent>) -> Result<(), String> {
 
-    let val = sqlx::query("SELECT id FROM value_units WHERE id = ?")
+    let value_old = if let Ok(Some(value)) = get_value_by_id(pool, value.id).await {
+        value
+    } else {
+        let msg = "Помилка читання значення при видаленні".to_string();
+        printers::err(msg.clone());
+        return Err(msg);
+    };
+
+    let val = sqlx::query_as::<_, ReadVal>("SELECT id, decoding_type, is_logging FROM value_units WHERE id = ?")
         .bind(value.id)
         .fetch_optional(pool)
         .await
@@ -278,18 +356,24 @@ async fn value_update(pool: &Pool<MySql>, value: &ValueUpdate) -> Result<(), Str
         printers::err(msg.clone());
         return Err(msg)
     }
-    if let Some(parent_id) = value.parent_device_id {  // TODO розширити перевірку на унікальність адрес та ID значень для конкретного пристрою
+
+    if value.settings.is_some() {
+        let decoding_type = if value.decoding_type.is_some() {value.decoding_type.unwrap()} else {val.unwrap().decoding_type};
+        check_json(decoding_type, &value.settings.clone().unwrap().to_string())?;
+    }
+
+    if let Some(parent_id) = value.parent_device_id {  // може бути bit_in_word, так що унікальність регістра не потрібна
         let dev = sqlx::query("SELECT id FROM devices WHERE id = ? AND deleted = 0")
             .bind(parent_id)
             .fetch_optional(pool)
             .await
             .map_err(|e|{
-                let msg = format!("Помилка читання з бази даних при валідації девайса: \n{}", e);
+                let msg = format!("Помилка читання з бази даних при валідації пристрою: \n{}", e);
                 printers::err(msg.clone());
                 msg
             })?;
         if dev.is_none() {
-            let msg = format!("Вказаний Device не існує або видалений: \n{}", parent_id);
+            let msg = format!("Вказаний пристрій не існує або видалений: \n{}", parent_id);
             printers::err(msg.clone());
             return Err(msg)
         }
@@ -323,9 +407,69 @@ async fn value_update(pool: &Pool<MySql>, value: &ValueUpdate) -> Result<(), Str
             msg
         })?;
 
+    let mut new_node_id = 0;
+
+    if let Ok(node)= get_node_directly_by_device_id(pool, value_old.parent_device_id).await {
+        new_node_id = node.id;
+        let change_config = ConfigEvent {
+            event_type: ConfigEventType::Update,
+            data: Arc::new(node)
+        };
+        if let Err(e) = tx_to_reader.send(change_config).await {
+            printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+        }
+    } else {
+        printers::warn("Помилка отримання ноди для оновлення".to_string());
+    };
+
+    if value.parent_device_id.is_some() {
+        if let Ok(node)= get_node_directly_by_device_id(pool, value.parent_device_id.unwrap()).await {
+            if new_node_id != node.id {
+                let change_config = ConfigEvent {
+                    event_type: ConfigEventType::Update,
+                    data: Arc::new(node)
+                };
+                if let Err(e) = tx_to_reader.send(change_config).await {
+                    printers::warn(format!("Помилка відправки нової конфігурації в читачі: {}", e))
+                }
+            }
+        } else {
+            printers::warn("Помилка отримання ноди для оновлення".to_string());
+        }
+    }
+
 
     let msg = format!("Оновлено значення : {:?}", value);
     printers::event(msg);
 
     Ok(())
+}
+
+async fn get_node_directly_by_device_id(
+    pool: &Pool<MySql>,
+    device_id: i32
+) -> Result<NodeRead, String> {
+    let node = sqlx::query_as::<_, NodeRead>(
+        r#"
+        SELECT n.id, n.ip, n.port, n.description
+        FROM nodes n
+        INNER JOIN devices d ON n.id = d.parent_node_id
+        WHERE d.id = ?
+        "#
+    )
+        .bind(device_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            let msg = format!("Помилка SQL-запиту ноди для девайсу {}: {}", device_id, e);
+            printers::err(msg.clone());
+            msg
+        })?
+        .ok_or_else(|| {
+            let msg = format!("Не знайдено активної ноди для девайсу з id: {}", device_id);
+            printers::err(msg.clone());
+            msg
+        })?;
+
+    Ok(node)
 }

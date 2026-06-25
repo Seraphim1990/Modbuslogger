@@ -1,4 +1,4 @@
-use crate::db::states::AppState;
+/*use crate::db::states::AppState;
 use axum::{
     extract::State,
     response::{Html, IntoResponse},
@@ -13,3 +13,5 @@ pub fn root() -> Router<AppState> {
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     Html((*state.index_html).clone())
 }
+
+ */

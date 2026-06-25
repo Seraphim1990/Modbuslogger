@@ -1,19 +1,31 @@
+use std::sync::Arc;
 use axum::{extract::State, Json, extract::Path, Router};
-use axum::extract::Query;
 use axum::routing::{get, post, put, delete};
 use crate::db::schemas::device::*;
-use crate::db::states::AppState;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
-use serde::Deserialize;
-use crate::db::schemas::node::{NodeRead};
+use serde::Serialize;
+use tokio::sync::{mpsc, oneshot};
 use crate::logger::printers;
+use crate::api::init_axum::AppState;
+use crate::messages::main_msg::MainMsg;
+use crate::messages::requests::node_request::{GetById, NodeRequest};
+use crate::messages::requests::request_struct::Request;
+use crate::messages::commands::{
+    command::{Command, CommandType},
+    device::DeviceCommand
+};
+use crate::messages::requests::device_request::{DeviceRequest, GetAllDevices, GetDeviceByNode};
+use crate::messages::requests::device_request::*;
+use crate::api::router::handle_get_request::{
+    handle_get_request,
+    check_send_message
+};
 
 pub fn devices_router() -> Router<AppState> {
     Router::new()
         .route("/devices/get_all", get(get_devices))
         .route("/devices/get_by_parent_id/:id", get(get_devices_by_parent_id))
-        .route("/devices/find_exists_addr_wit_parent_id", get(find_exists_addr_wit_parent_id))
         .route("/devices/get_device/:id", get(get_device))
         .route("/devices/create", post(create_devices))
         .route("/devices/update/:id", put(update_device))
@@ -38,46 +50,79 @@ pub async fn create_devices(State(state): State<AppState>, Json(payload): Json<D
         return (StatusCode::BAD_REQUEST, "id Батьківської ноди не може бути від'ємним").into_response();
     }
 
-    // Перевірка існування батьківської ноди
-    let node = sqlx::query_as::<_, NodeRead>(
-        "SELECT id, ip, port, description FROM nodes WHERE id = ?"
-    )
-        .bind(payload.parent_node_id)
-        .fetch_optional(&state.pool)
-        .await;
+    let (tx, rx) = oneshot::channel();
+    let request = MainMsg::Request(
+        Request::GetNode(
+            NodeRequest::GetById(
+                GetById { node_id: payload.parent_node_id, request_channel: tx, }
+            )
+        )
+    );
 
-    match node {
-        Ok(Some(_)) => {},
-        Ok(None) => {
-            return (StatusCode::BAD_REQUEST, "Відсутня нода з таким id").into_response();
+    if let Err(e) = check_send_message(&state.from_api, request).await {
+        return e.into_response();
+    }
+
+    match rx.await {
+        Ok(Ok(node)) => {
+            if node.is_none() {
+                let msg = format!("Відсутня нода id: \n{}",  payload.parent_node_id);
+                printers::err(msg.clone());
+                return (StatusCode::BAD_REQUEST, msg).into_response()
+            }
+        },
+        Ok(Err(_)) => {
+            let msg = "Помилка читання бази данних, детальніше в логах".to_string();
+            printers::err(msg.clone());
+            return (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
         },
         Err(e) => {
-            let msg = format!("Помилка читання бази даних, fn get_node_by_id, \n {}", e);
+            let msg = format!("Помилка каналу: \n{}", e);
             printers::err(msg.clone());
             return (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
         }
     }
 
-    // Запит адаптовано під новий DDL (без time_for_retry / response, додано timeout)
-    let res = sqlx::query(
-        "INSERT INTO devices (parent_node_id, device_name, address, time_for_recall, timeout, retry_count, is_active, read_by_group, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-        .bind(payload.parent_node_id)
-        .bind(payload.device_name)
-        .bind(payload.address)
-        .bind(payload.time_for_recall)
-        .bind(payload.timeout)
-        .bind(payload.retry_count)
-        .bind(payload.is_active)
-        .bind(payload.read_by_group)
-        .bind(payload.description)
-        .execute(&state.pool)
-        .await;
+    let (tx, rx) = oneshot::channel();
 
-    match res {
-        Ok(_) => (StatusCode::OK, "OK").into_response(),
+    let create_device_cmd = Arc::new(
+        DeviceCommand::Create(
+            DeviceCreate {
+                device_name: payload.device_name,
+                address: payload.address,
+                parent_node_id: payload.parent_node_id,
+                time_for_recall: payload.time_for_recall,
+                timeout: payload.timeout,
+                retry_count: payload.retry_count,
+                is_active: payload.is_active,
+                read_by_group: payload.read_by_group,
+                description: payload.description,
+            }
+        )
+    );
+
+    let cmd = MainMsg::Command(
+        Command {
+            cmd: CommandType::DeviceCommand(create_device_cmd),
+            request_channel: tx,
+        }
+    );
+
+    if let Err(e) = check_send_message(&state.from_api, cmd).await {
+        return e.into_response();
+    }
+
+
+
+    match rx.await {
+        Ok(Ok(_)) => {(StatusCode::OK, "OK").into_response()},
+        Ok(Err(e)) => {
+            let msg = format!("Помилка виконання команди створення пристрою:\n {:?}", e.to_string());
+            printers::err(msg.clone());
+            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+        },
         Err(e) => {
-            let msg = format!("Помилка запису в базу даних, \n {}", e);
+            let msg = format!("Помилка каналу: \n{}", e);
             printers::err(msg.clone());
             (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
         }
@@ -85,88 +130,70 @@ pub async fn create_devices(State(state): State<AppState>, Json(payload): Json<D
 }
 
 pub async fn get_devices(State(state): State<AppState>) -> impl IntoResponse {
-    // Вибираємо тільки не видалені пристрої (додано фільтр WHERE deleted = 0 або deleted IS NULL)
-    let devices = sqlx::query_as::<_, DeviceRead>(
-        "SELECT id, parent_node_id, device_name, address, time_for_recall, timeout, retry_count, is_active, read_by_group, description, deleted, deleted_at FROM devices WHERE deleted = 0",
-    ).fetch_all(&state.pool).await;
 
-    match devices {
-        Ok(devices) => (StatusCode::OK, Json(devices)).into_response(),
-        Err(e) => {
-            let msg = format!("Помилка читання бази даних, fn get_devices: \n{}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
-    }
+    let (tx, rx) = oneshot::channel();
+
+    let request_body = MainMsg::Request(
+        Request::GetDevice(
+            DeviceRequest::GetAllDevices(
+                GetAllDevices{ request_channel: tx}
+            )
+        )
+    );
+    handle_get_request(rx, state.from_api, request_body).await
 }
 
 pub async fn get_devices_by_parent_id(
     State(state): State<AppState>,
     Path(parent_id): Path<u32>,
 ) -> impl IntoResponse {
-    let devices = sqlx::query_as::<_, DeviceRead>(
-        "SELECT id, parent_node_id, device_name, address, time_for_recall, timeout, retry_count, is_active, read_by_group, description, deleted, deleted_at
-        FROM devices WHERE parent_node_id = ? AND deleted = 0"
-    )
-        .bind(parent_id)
-        .fetch_all(&state.pool)
-        .await;
 
-    match devices {
-        Ok(devices) => {
-            if devices.is_empty() {
-                let msg = format!("No devices found for node {}", parent_id);
-                return (StatusCode::NOT_FOUND, msg).into_response();
-            }
-            (StatusCode::OK, Json(devices)).into_response()
-        },
-        Err(e) => {
-            let msg = format!("Помилка читання бази даних: {}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
-    }
-}
+    let (tx, rx) = oneshot::channel();
 
-#[derive(Deserialize)]
-pub struct DeviceQuery {
-    parent_id: u32,
-    address: Option<u32>,
-}
-
-pub async fn find_exists_addr_wit_parent_id(State(state): State<AppState>, Query(params): Query<DeviceQuery>) -> impl IntoResponse {
-    let device = sqlx::query_as::<_, DeviceRead>(
-        "SELECT id, parent_node_id, device_name, address, time_for_recall, timeout, retry_count, is_active, read_by_group, description, deleted, deleted_at
-         FROM devices
-         WHERE address = ? AND parent_node_id = ? AND deleted = 0"
-    )
-        .bind(params.address)
-        .bind(params.parent_id)
-        .fetch_optional(&state.pool)
-        .await;
-
-    match device {
-        Ok(Some(device)) => (StatusCode::OK, Json(device)).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "Device not found").into_response(),
-        Err(e) => {
-            let msg = format!("Помилка читання бази даних: {}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
-    }
+    let request_body = MainMsg::Request(
+        Request::GetDevice(
+            DeviceRequest::GetByNode(
+                GetDeviceByNode{
+                    node_id: parent_id as i32,
+                    request_channel: tx
+                }
+            )
+        )
+    );
+    handle_get_request(rx, state.from_api, request_body).await;
 }
 
 pub async fn get_device(State(state): State<AppState>, Path(id): Path<u32>) -> impl IntoResponse {
-    let device = sqlx::query_as::<_, DeviceRead>(
-        "SELECT id, parent_node_id, device_name, address, time_for_recall, timeout, retry_count, is_active, read_by_group, description, deleted, deleted_at
-        FROM devices WHERE id = ? AND deleted = 0",
-    )
-        .bind(id).fetch_optional(&state.pool).await;
-    match device {
-        Ok(Some(device)) => (StatusCode::OK, Json(device)).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "Пристрій не знайдено").into_response(),
+    let (tx, rx) = oneshot::channel();
+
+    let request_body = MainMsg::Request(
+        Request::GetDevice(
+            DeviceRequest::GetDeviceById(
+                GetDeviceById{
+                    id: id as i32,
+                    request_channel: tx
+                }
+            )
+        )
+    );
+
+    if let Err(e) = check_send_message(&state.from_api, request_body).await {
+        return e.into_response();
+    }
+    match rx.await {
+        Ok(Ok(device)) => {
+            match device {
+                Some(device) => (StatusCode::OK, Json(device)).into_response(),
+                None => (StatusCode::NOT_FOUND, "Пристрій не знайдено").into_response(),
+            }
+        },
+        Ok(Err(e)) => {
+            let msg = format!("Помилка виконання команди читання пристрою:\n {:?}", e);
+            printers::err(msg.clone());
+            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+        },
         Err(e) => {
-            let msg = format!("Помилка читання бази даних: {}", e);
+            let msg = format!("Помилка каналу: \n{}", e);
             printers::err(msg.clone());
             (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
         }
@@ -196,108 +223,71 @@ pub async fn update_device(State(state): State<AppState>, Path(id): Path<u32>, J
         }
     }
 
-    // Якщо прилітає parent_node_id, перевіряємо його на валідність та існування ноди
-    if let Some(p_node_id) = payload.parent_node_id {
-        if p_node_id <= 0 {
-            return (StatusCode::BAD_REQUEST, "id Батьківської ноди не може бути від'ємним").into_response();
-        }
-
-        let node = sqlx::query_as::<_, NodeRead>(
-            "SELECT id, ip, port, description FROM nodes WHERE id = ?"
-        )
-            .bind(p_node_id)
-            .fetch_optional(&state.pool)
-            .await;
-
-        match node {
-            Ok(Some(_)) => {},
-            Ok(None) => {
-                return (StatusCode::BAD_REQUEST, "Ноди з таким id не існує").into_response();
-            },
-            Err(e) => {
-                let msg = format!("Помилка бази даних при перевірці ноди: \n{}", e);
-                printers::err(msg.clone());
-                return (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-            }
-        }
-    }
-
-    if payload.address.is_some() || payload.parent_node_id.is_some() {
-        let device = sqlx::query_as::<_, DeviceRead>(
-            "SELECT id, parent_node_id, device_name, address, time_for_recall, timeout, retry_count, is_active, read_by_group, description, deleted, deleted_at
-             FROM devices
-             WHERE address = COALESCE(?, address) AND parent_node_id = COALESCE(?, parent_node_id) AND deleted = 0"
-        )
-            .bind(payload.address)
-            .bind(payload.parent_node_id)
-            .fetch_optional(&state.pool)
-            .await;
-
-        match device {
-            Ok(Some(dev)) => {
-                if dev.id != id as i32 {
-                    return (StatusCode::BAD_REQUEST, "Ця нода уже має пристрій з такою адресою").into_response();
+    let update_device_cmd = CommandType::DeviceCommand(
+        Arc::new(
+            DeviceCommand::Update(
+                DeviceUpdate {
+                    id: id as i32,
+                    device_name: payload.device_name,
+                    address: payload.address,
+                    parent_node_id: payload.parent_node_id,
+                    time_for_recall: payload.time_for_recall,
+                    timeout: payload.timeout,
+                    retry_count: payload.retry_count,
+                    is_active: payload.is_active,
+                    read_by_group: payload.read_by_group,
+                    description: payload.description,
                 }
-            },
-            Ok(_) => {},
-            Err(e) => {
-                let msg = format!("Помилка перевірки унікальності адреси: {}", e);
-                printers::err(msg.clone());
-                return (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-            },
+            )
+        )
+    );
+    let (tx, rx) = oneshot::channel();
+    let cmd = MainMsg::Command(
+        Command {
+            cmd: update_device_cmd,
+            request_channel: tx
         }
-    }
-    let res = sqlx::query(
-        "UPDATE devices
-         SET
-            device_name = COALESCE(?, device_name),
-            address = COALESCE(?, address),
-            parent_node_id = COALESCE(?, parent_node_id),
-            time_for_recall = COALESCE(?, time_for_recall),
-            timeout = COALESCE(?, timeout),
-            retry_count = COALESCE(?, retry_count),
-            is_active = COALESCE(?, is_active),
-            read_by_group = COALESCE(?, read_by_group),
-            description = COALESCE(?, description)
-         WHERE id = ?"
-    )
-        .bind(payload.device_name)
-        .bind(payload.address)
-        .bind(payload.parent_node_id)
-        .bind(payload.time_for_recall)
-        .bind(payload.timeout)
-        .bind(payload.retry_count)
-        .bind(payload.is_active)
-        .bind(payload.read_by_group)
-        .bind(payload.description)
-        .bind(id)
-        .execute(&state.pool)
-        .await;
+    );
+    handle_change_request(rx, state.from_api, cmd).await
+}
+pub async fn delete_device(State(state): State<AppState>, Path(id): Path<u32>) -> impl IntoResponse {
 
-    match res {
-        Ok(_) => (StatusCode::OK, "OK").into_response(),
-        Err(e) => {
-            let msg = format!("Помилка оновлення пристрою:\n {}", e);
-            printers::err(msg.clone());
-            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
-        }
-    }
+    let cmd = CommandType::DeviceCommand(
+        Arc::new(
+            DeviceCommand::Delete(
+                DeviceDelete {
+                    id: id as i32,
+                }
+            )
+        )
+    );
+    let (tx, rx) = oneshot::channel();
+    let cmd = MainMsg::Command(
+        Command {
+             cmd,
+             request_channel: tx
+         }
+    );
+    handle_change_request(rx, state.from_api, cmd).await
 }
 
-// Замість повного DELETE робимо Soft Delete (безпечне видалення), як закладено в DDL
-pub async fn delete_device(State(state): State<AppState>, Path(id): Path<u32>) -> impl IntoResponse {
-    let current_timestamp = chrono::Utc::now().timestamp();
-
-    let res = sqlx::query("UPDATE devices SET deleted = 1, deleted_at = ? WHERE id = ?")
-        .bind(current_timestamp)
-        .bind(id)
-        .execute(&state.pool)
-        .await;
-
-    match res {
-        Ok(_) => (StatusCode::OK, "OK").into_response(),
+async fn handle_change_request<T>(rx: oneshot::Receiver<Result<T, String>>,
+                               send_chanel: mpsc::Sender<MainMsg>,
+                               cmd: MainMsg) -> Response
+where T: Serialize
+{
+    if let Err(e) = check_send_message(&send_chanel, cmd).await {
+        return e.into_response();
+    }
+    match rx.await {
+        Ok(Ok(_)) => {(StatusCode::OK, "OK").into_response()},
+        Ok(Err(e)) => {
+            let msg = format!("Помилка виконання команди пристрою:\n {:?}", e);
+            printers::err(msg.clone());
+            (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+        },
         Err(e) => {
-            let msg = format!("Помилка видалення пристрою:\n {}", e);
+            let msg = format!("Помилка каналу: \n{}", e);
             printers::err(msg.clone());
             (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
         }

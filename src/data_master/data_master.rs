@@ -1,11 +1,14 @@
+use std::sync::Arc;
 use crate::messages::main_msg::MainMsg;
 use tokio::sync::mpsc;
+use crate::db::schemas::node::NodeCreate;
 use crate::logger::*;
 use crate::messages::commands::command::{Command, CommandType};
+use crate::messages::config_event::{ConfigEvent, ConfigEventType};
 
 pub async fn run_data_master(mut from_api: mpsc::Receiver<MainMsg>, to_api: mpsc::Sender<MainMsg>, // TODO to_api change to broadcast!
-                    mut from_reader: mpsc::Receiver<MainMsg>, to_reader: mpsc::Sender<CommandType>,
-                    to_db: mpsc::Sender<MainMsg>,)
+                             mut from_reader: mpsc::Receiver<MainMsg>, to_reader: mpsc::Sender<ConfigEvent>,
+                             to_db: mpsc::Sender<MainMsg>, mut from_db: mpsc::Receiver<ConfigEvent> )
 {
     printers::event(String::from("Старт контролера"));
     loop {
@@ -18,7 +21,6 @@ pub async fn run_data_master(mut from_api: mpsc::Receiver<MainMsg>, to_api: mpsc
                                 send_to_db(msg, &to_db).await;
                             }
                             MainMsg::Command(command) => {
-                                send_to_reader(command.cmd.clone(), &to_reader).await;
                                 send_to_db(MainMsg::Command(command), &to_db).await;
                             }
                             MainMsg::Event(_) => { // API евентів не пакує
@@ -28,7 +30,6 @@ pub async fn run_data_master(mut from_api: mpsc::Receiver<MainMsg>, to_api: mpsc
                     }
                     None => {
                         printers::err(String::from("Канал від API до контролера упав. Можна курить прямо тут"));
-                        panic!()
                     }
                 }
             }
@@ -42,7 +43,7 @@ pub async fn run_data_master(mut from_api: mpsc::Receiver<MainMsg>, to_api: mpsc
                             },
                             MainMsg::Event(event) => {
                                 send_to_db(MainMsg::Event(event.clone()), &to_db).await;
-                                // send_api(MainMsg::Event(event), &to_api).await;  // TODO!!!!
+                                send_api(MainMsg::Event(event), &to_api).await;
                             },
                             MainMsg::Command(_) => { // в цій гілці не використовується
                                 printers::err(String::from("Ти шо написав??! Читач не має відправляти MainMsg::Command!!!!"));
@@ -51,9 +52,19 @@ pub async fn run_data_master(mut from_api: mpsc::Receiver<MainMsg>, to_api: mpsc
                     }
                     None => {
                         printers::err(String::from("Канал від опитувача до контролера упав. Це фіаско..."));
-                        panic!()
                     }
                 }
+            }
+            from_db_msg = from_db.recv() => {
+                match from_db_msg {
+                    Some(event) => {
+                        send_to_reader(event, &to_reader).await;
+                    }
+                    None => {
+                        printers::err(String::from("Канал від опитувача від бази даних упав. Це фіаско..."));
+                    }
+                }
+                
             }
         }
     };
@@ -82,7 +93,8 @@ async fn send_to_db(msg: MainMsg, to_db: &mpsc::Sender<MainMsg>) {
     }
 }
 
-async fn send_to_reader(msg: CommandType, to_reader: &mpsc::Sender<CommandType>) {
+async fn send_to_reader(msg: ConfigEvent, to_reader: &mpsc::Sender<ConfigEvent>) {
+    
     let send_res = to_reader.send(msg).await;
     match send_res {
         Ok(_) => {},

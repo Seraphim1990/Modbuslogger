@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::logger::printers;
 
 #[derive(Serialize, Deserialize)]
-struct BitInWordSerde {
+pub struct BitInWordSerde {
     tag: String,
     addr: i32,
     #[serde(rename = "bitAddr")]
@@ -67,7 +67,7 @@ impl ValueInterface for BitInWord {
     fn get_id(&self) -> i32 {
         self.id
     }
-    fn get_value(&self, reg_list: &Vec<u16>, timestamp: u64) -> ModbusMeasure {
+    fn get_value(&self, reg_list: &Vec<u16>, timestamp: i64) -> ModbusMeasure {
         if reg_list.len() <= self.pos_in_list { // заглушка для тестування, це ж довбаний раст
             panic!("Паніка при декодуванні значення {}, вихід за межі вектору", &self.tag);
         }
@@ -85,7 +85,7 @@ impl ValueInterface for BitInWord {
         self.m_type
     }
 
-    fn fail(&self, timestamp: u64) -> ModbusMeasure {
+    fn fail(&self, timestamp: i64) -> ModbusMeasure {
         ModbusMeasure {
             measure_value: f64::MIN,
             is_logging: self.is_logging,

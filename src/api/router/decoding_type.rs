@@ -1,3 +1,4 @@
+/*
 use axum::{extract::State, Json, extract::Path, Router};
 use axum::routing::{get};
 use crate::db::schemas::decoding_type::*;
@@ -81,3 +82,5 @@ pub async fn get_qml_addon(
     // Якщо все ок — повертаємо знайдений addon
     (StatusCode::OK, Json(addon)).into_response()
 }
+
+ */

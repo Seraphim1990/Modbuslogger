@@ -7,7 +7,7 @@ use crate::reader::structs::modbus_measure::ModbusMeasure;
 use crate::logger::printers;
 
 #[derive(Serialize, Deserialize)]
-struct SatecDoubleRegistersSerde {
+pub struct SatecDoubleRegistersSerde {
     pub tag: String,
     #[serde(rename = "regType")]
     pub reg_type: String,
@@ -85,7 +85,7 @@ impl ValueInterface for SatecDoubleRegistersInt32 {
         }
         false
     }
-    fn get_value(&self, reg_list: &Vec<u16>, timestamp: u64) -> ModbusMeasure {
+    fn get_value(&self, reg_list: &Vec<u16>, timestamp: i64) -> ModbusMeasure {
 
         if reg_list.len() <= self.hi_pos_register as usize || reg_list.len() <= self.lo_pos_register as usize { // заглушка для тестування, це ж довбаний раст
             panic!("Паніка при декодуванні значення {}, вихід за межі вектору", &self.tag);
@@ -111,7 +111,7 @@ impl ValueInterface for SatecDoubleRegistersInt32 {
     fn get_type(&self) -> RegType {
         self.m_type
     }
-    fn fail(&self, timestamp: u64) -> ModbusMeasure {
+    fn fail(&self, timestamp: i64) -> ModbusMeasure {
         ModbusMeasure {
             measure_value: f64::MIN,
             is_logging: self.is_logging,

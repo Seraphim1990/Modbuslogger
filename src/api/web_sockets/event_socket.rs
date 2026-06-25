@@ -1,3 +1,4 @@
+/*
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -146,3 +147,5 @@ async fn send_json<T: Serialize>(socket: &mut WebSocket, data: &T) {
         let _ = socket.send(Message::Text(json.into())).await;
     }
 }
+
+ */

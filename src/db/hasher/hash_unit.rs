@@ -5,30 +5,29 @@ pub struct ValueHasher {
     capacity: usize,
     current: usize,
     // TODO: винести в toml конфіг
-    stable_delta: u64,
-    failure_delta: u64,
+    stable_delta: i64,
+    failure_delta: i64,
     in_failure: bool,
     failure_reported: bool,
 }
 
 impl ValueHasher {
-    pub fn new(capacity: usize, val: f64, timestamp: u64) -> ValueHasher {
-        let first_value = HashedValue { val, timestamp };
+    pub fn new(capacity: usize, val: f64, timestamp: i64) -> ValueHasher {
         let mut hashed_values = vec![HashedValue::default(); capacity];
-        hashed_values.push(first_value);
+        hashed_values[0] = HashedValue { val, timestamp };
         ValueHasher {
             hashed_values,
-            size: 0,
+            size: 1,
             current: 0,
             capacity,
-            stable_delta: 300,  // фільтр на незмінні дані
-            failure_delta: 120, // фільтр невдач
+            stable_delta: 300,
+            failure_delta: 120,
             in_failure: false,
             failure_reported: false,
         }
     }
 
-    pub fn add(&mut self, val: f64, timestamp: u64) -> Result<Option<HashedValue>, HashedValue> {
+    pub fn add(&mut self, val: f64, timestamp: i64) -> Result<Option<HashedValue>, HashedValue> {
         if val == f64::MIN {
             if !self.in_failure {
                 self.advance_and_write(val, timestamp);
@@ -82,7 +81,7 @@ impl ValueHasher {
         Ok(None)
     }
 
-    pub fn get_hashed(&self, from: u64, to: u64) -> Option<Vec<HashedValue>> {
+    pub fn get_hashed(&self, from: i64, to: i64) -> Option<Vec<HashedValue>> {
         if from >= to || self.size == 0 {
             return None;
         }
@@ -93,7 +92,7 @@ impl ValueHasher {
             (self.current + 1) % self.capacity
         };
 
-        if self.hashed_values[oldest_idx].timestamp > from {
+        if self.hashed_values[oldest_idx].timestamp > from as i64 {
             return None;
         }
 
@@ -113,7 +112,7 @@ impl ValueHasher {
         Some(result)
     }
 
-    fn advance_and_write(&mut self, val: f64, timestamp: u64) {
+    fn advance_and_write(&mut self, val: f64, timestamp: i64) {
         let next = if self.size == 0 {
             0
         } else {
@@ -130,7 +129,7 @@ impl ValueHasher {
         arr: &[HashedValue],
         size: usize,
         oldest_idx: usize,
-        target: u64,
+        target: i64,
     ) -> usize {
         let len = arr.len();
         let mut left = 0usize;

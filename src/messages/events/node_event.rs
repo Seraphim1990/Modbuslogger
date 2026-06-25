@@ -1,6 +1,7 @@
 use std::sync::Arc;
+use serde::Serialize;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, PartialOrd, PartialEq)]
 pub enum NodeEventType{
     Connected,
     UnConnected,

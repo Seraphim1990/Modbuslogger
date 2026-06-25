@@ -12,7 +12,7 @@ use crate::logger::printers;
 "multiplier": 2}'
  */
 #[derive(Serialize, Deserialize)]
-struct ComaShiftSerde {
+pub struct ComaShiftSerde {
     pub tag: String,
     pub addr: i32,
     #[serde(rename = "regType")]
@@ -35,7 +35,7 @@ pub struct ComaShift {
 impl ValueInterface for ComaShift {
     fn init(&mut self, settings: String, id: i32, logging: bool) -> Vec<i32> {
         let setting = serde_json::from_str(settings.as_str());
-        let mut init_data: ComaShiftSerde;
+        let init_data: ComaShiftSerde;
 
         match setting {
             Ok(s) => init_data = s,
@@ -69,7 +69,7 @@ impl ValueInterface for ComaShift {
     fn get_id(&self) -> i32 {
         self.id
     }
-    fn get_value(&self, reg_list: &Vec<u16>, timestamp: u64) -> ModbusMeasure {
+    fn get_value(&self, reg_list: &Vec<u16>, timestamp: i64) -> ModbusMeasure {
         if reg_list.len() <= self.pos_in_list { // заглушка для тестування, це ж довбаний раст
             panic!("Паніка при декодуванні значення {}, вихід за межі вектору", &self.tag);
         }
@@ -88,7 +88,7 @@ impl ValueInterface for ComaShift {
         self.m_type
     }
 
-    fn fail(&self, timestamp: u64) -> ModbusMeasure {
+    fn fail(&self, timestamp: i64) -> ModbusMeasure {
         ModbusMeasure {
             measure_value: f64::MIN,
             is_logging: self.is_logging,

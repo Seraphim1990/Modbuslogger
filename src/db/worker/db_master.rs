@@ -20,46 +20,58 @@ use crate::messages::events::{
     node_event::NodeEvent,
 };
 
-pub async fn run_db_master(rx: mpsc::Receiver<MainMsg>) {
+use crate::db::hasher::hash_master::measure_master;
+use crate::messages::config_event::ConfigEvent;
+
+pub async fn run_db_master(rx: mpsc::Receiver<MainMsg>, tx_to_reader: mpsc::Sender<ConfigEvent>) {
     printers::event(String::from("Старт воркера бази даних"));
 
     let mut rx = rx;
     let pool = init_db(5).await;  // TODO зробити окремого воркера для роботи з Measure
+
+    let (measure_tx, measure_rx) = mpsc::channel::<MainMsg>(100);
+
+    tokio::spawn(measure_master(pool.clone(), measure_rx));
 
     while let Some(msg) = rx.recv().await {
         match msg {
             MainMsg::Command(msg) => {  // TODO
                 match msg.cmd {
                     CommandType::NodeCommand(_) => {
-                        command_node(&pool, msg);
+                        command_node(&pool, msg, tx_to_reader.clone());
                     },
                     CommandType::DeviceCommand(_) => {
-                        command_device(&pool, msg);
+                        command_device(&pool, msg, tx_to_reader.clone());
                     },
                     CommandType::ValueCommand(_) => {
-                        command_value(&pool, msg);
+                        command_value(&pool, msg, tx_to_reader.clone());
                     },
                 }
             },  //TODO
             MainMsg::Request(msg) => {
                 match msg {
-                    Request::GetNode(request) =>  node_get(&pool,request),
-                    Request::GetDevice(request) => devise_get(&pool,request),
-                    Request::GetValue(request) => value_get(&pool,request),
+                    Request::GetNode(request) =>  node_get(&pool, request),
+                    Request::GetDevice(request) => devise_get(&pool, request),
+                    Request::GetValue(request) => value_get(&pool, request),
                     Request::GetDecodingType => {}, //TODO
                     Request::GetLogicGroup => {}, //TODO
-                    Request::GetMeasure(measure) => {}, //TODO
+                    Request::GetMeasure(measure) => {
+                        let req = MainMsg::Request(Request::GetMeasure(measure));
+                        if let Err(e) = measure_tx.send(req).await {
+                            printers::err(format!("Помилка відправки події для зберігання: {}", e));
+                        }
+                    },
                 }
             },
             MainMsg::Event(event) => {
                 match event {
                     Event::DeviceEvent(dev_ev) => {
-                        printers::event(String::from("Отримано дані вимірювання"));
-                        for i in &dev_ev.measures {
-                            println!("{:?}", i);
+                        let ev = MainMsg::Event(Event::DeviceEvent(dev_ev));
+                        if let Err(e) = measure_tx.send(ev).await {
+                            printers::err(format!("Помилка відправки події для зберігання: {}", e));
                         }
                     },
-                    Event::NodeEvent(node_ev) => {} // TODO!
+                    Event::NodeEvent(_) => {}
                 }
             }
         }

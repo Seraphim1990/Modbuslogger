@@ -4,25 +4,7 @@ use sqlx::{MySql, MySqlPool, Pool};
 
 use serde::Deserialize;
 use sqlx::mysql::MySqlPoolOptions;
-use tokio::sync::broadcast;
-use crate::api::web_sockets::actual_data::BroadcastUpdate;
-use crate::api::web_sockets::socket_types::*;
-use crate::api::web_sockets::event_socket::{EventBroadcastUpdate, EventDataContainer};
 
-
-#[derive(Clone)]
-pub struct AppState {
-    pub pool: MySqlPool,
-    pub index_html: Arc<String>,
-    
-    // websocket
-    pub vault: Arc<ValueVault>,
-    pub tx: broadcast::Sender<BroadcastUpdate>,
-
-    // events
-    pub event_vault: Arc<EventDataContainer>,
-    pub event_tx: broadcast::Sender<EventBroadcastUpdate>,
-}
 
 #[derive(Debug, Deserialize)]
 struct DBConf{

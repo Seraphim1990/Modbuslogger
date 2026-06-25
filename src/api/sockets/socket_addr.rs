@@ -11,7 +11,7 @@ struct SocketConfig{
 }
 
 pub fn init_socket() -> SocketAddr {
-    let config_contents = fs::read_to_string("../../../configs/server.toml")
+    let config_contents = fs::read_to_string("configs/server.toml")
         .expect("Не вдалося прочитати файл server.toml");
 
     let config: SocketConfig = toml::from_str(&config_contents)

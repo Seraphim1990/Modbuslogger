@@ -18,9 +18,10 @@ use crate::messages::{
     commands::command::{Command, CommandType}
 };
 use crate::messages::commands::node::NodeCommand;
+use crate::messages::config_event::{ConfigEvent, ConfigEventType};
 use crate::reader::reader_loop::reading_loop::read_master::node_loop;
 
-pub async fn node_master(from_controller: mpsc::Receiver<CommandType>, to_controller: mpsc::Sender<MainMsg>,) {
+pub async fn node_master(from_controller: mpsc::Receiver<ConfigEvent>, to_controller: mpsc::Sender<MainMsg>,) {
     printers::event(String::from("Старт опитувача"));
     let mut from_controller = from_controller;
 
@@ -31,19 +32,11 @@ pub async fn node_master(from_controller: mpsc::Receiver<CommandType>, to_contro
             controller_msg = from_controller.recv() => {
                 match controller_msg {
                     Some(msg) => {
-                        match &msg {
-                            CommandType::NodeCommand(cmd) => {
-                                match cmd.deref() {
-                                    NodeCommand::Create(node_create) => {
-                                        create_new_node(&to_node_tx, &from_node_tx, &to_controller, &node_create).await;
-                                    },
-                                    _ => send_to_workers(&to_node_tx, msg)
-                                }
+                        match &msg.event_type {
+                            ConfigEventType::Create => {
+                                create_new_node(&to_node_tx, &from_node_tx, &to_controller, &msg.data).await;
                             },
-                            CommandType::ValueCommand(_) => {
-                                send_to_workers(&to_node_tx, msg)
-                            },
-                            CommandType::DeviceCommand(_) => {
+                            ConfigEventType::Update | ConfigEventType::Delete => {
                                 send_to_workers(&to_node_tx, msg)
                             },
                         }
@@ -93,10 +86,10 @@ pub async fn node_master(from_controller: mpsc::Receiver<CommandType>, to_contro
     }
 }
 
-async fn create_new_node(to_node_tx: &broadcast::Sender<CommandType>,
+async fn create_new_node(to_node_tx: &broadcast::Sender<ConfigEvent>,
                          from_node_tx: &mpsc::Sender<MainMsg>,
                          to_controller: &mpsc::Sender<MainMsg>,
-                         node: &NodeCreate) {
+                         node: &NodeRead) {
     let from_node_tx_clone = from_node_tx.clone();
     let node_subscribe = to_node_tx.subscribe();
     let mut try_counter = 0;
@@ -132,7 +125,7 @@ async fn create_new_node(to_node_tx: &broadcast::Sender<CommandType>,
     }
 }
 
-fn send_to_workers(tx: &broadcast::Sender<CommandType>, signal: CommandType) {
+fn send_to_workers(tx: &broadcast::Sender<ConfigEvent>, signal: ConfigEvent) {
     let send_res = tx.send(signal);
     match send_res {
         Ok(_) => {},
@@ -143,7 +136,7 @@ fn send_to_workers(tx: &broadcast::Sender<CommandType>, signal: CommandType) {
     }
 }
 
-async fn init_nodes(to_controller: &mpsc::Sender<MainMsg>) -> (broadcast::Sender<CommandType>, mpsc::Receiver<MainMsg>, mpsc::Sender<MainMsg>)
+async fn init_nodes(to_controller: &mpsc::Sender<MainMsg>) -> (broadcast::Sender<ConfigEvent>, mpsc::Receiver<MainMsg>, mpsc::Sender<MainMsg>)
 {
     let (rx, get_all_node_msg) = get_all_node_request();
     let _ = to_controller.send(get_all_node_msg).await;
@@ -154,7 +147,7 @@ async fn init_nodes(to_controller: &mpsc::Sender<MainMsg>) -> (broadcast::Sender
 
             // Створюємо канали та мапу
             let (from_node_tx, from_node_rx) = mpsc::channel::<MainMsg>(100);
-            let (to_node_tx, _to_node_rx) = broadcast::channel::<CommandType>(100);
+            let (to_node_tx, _to_node_rx) = broadcast::channel::<ConfigEvent>(100);
 
             for node in nodes {
                 let from_node_tx_clone = from_node_tx.clone();

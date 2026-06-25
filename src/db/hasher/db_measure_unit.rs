@@ -21,7 +21,7 @@ impl DbMeasureUnit {
             pool
         }
     }
-    pub async fn get_measures(&self, val_id: i32, from: u64, to: u64) -> Result<Vec<HashedValue>, String> {
+    pub async fn get_measures(&self, val_id: i32, from: i64, to: i64) -> Result<Vec<HashedValue>, String> {
 
         if self.buff_errored {
             return Err("Проблеми з архівацією даних".to_string()); // якшо в мене не получилось зберегти транзакцію, нада хоть якось це клієнту довести
@@ -53,7 +53,7 @@ impl DbMeasureUnit {
     pub async fn save_value(&mut self, val_id: i32, val: HashedValue) -> Result<(), ()> {
         let saved_value = ForFlush {id: val_id, value: val};
         self.buff.push(saved_value);
-        if self.buff.len() > 100 {
+        if self.buff.len() > 20 {
             self.flush().await?;
         }
         Ok(())

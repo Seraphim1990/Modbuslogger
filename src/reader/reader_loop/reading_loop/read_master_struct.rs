@@ -1,5 +1,6 @@
 // read_master_struct.rs
 use std::io::ErrorKind;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
@@ -71,97 +72,15 @@ impl ReadMaster{
     pub fn ip(&self) -> Arc<String>{
         self.ip.clone()
     }
-    pub async fn change_connecting_config(&mut self, ip: Option<String>, port: Option<i32>){
-        let mut changed = false;
-        if let Some(ip) = ip {
-            if self.ip.as_str() != ip {
-                self.ip = Arc::new(ip);
-                changed = true;
-            }
+    pub async fn update(&mut self, conf: Arc<NodeRead>) {
+        if self.ip.as_str() != conf.ip || self.port != conf.port.unwrap_or(502) {
+            self.ip = Arc::new(conf.ip.clone());
+            self.port = conf.port.unwrap_or(502);
+            let _ = self.create_context().await;
         }
-        if let Some(port) = port {
-            if self.port != port {
-                self.port = port;
-                changed = true;
-            }
-        }
-        if changed {
-            let _ =self.create_context().await;
-        }
-    }
-    pub async fn add_device(&mut self){
-        let mut counter = 0;
-        loop {
-            sleep(Duration::from_millis(50)).await; // чекаємо доки збережеться в БД
-            let devices = self.get_devises().await;
-            if let Some(device) = devices
-                .into_iter()
-                .find(|d| !self.devices.iter().any(|u| u.id() == d.id)) {
-                let new_device = self.get_device_from_db(device).await;
-                if let Some(new_device) = new_device {
-                    self.devices.push(new_device);
-                    break;
-                }
-            }
-            counter += 1;
-            if counter > 5 {
-                printers::warn(format!("Не вдалось оновити конфігурацію {}", self.ip));
-                break;
-            }
-        }
-    }
-
-    pub fn remove_device(&mut self, id: i32){
-        if let Some(index) = self.devices.iter().position(|d| d.id() == id){
-            self.devices.remove(index);
-        }
-    }
-
-    pub async fn update_devices(&mut self, id: i32){
-        let mut counter = 0;
-        loop {
-            sleep(Duration::from_millis(50)).await; // чекаємо доки збережеться в БД
-            if let Some(index) = self.devices.iter().position(|d| d.id() == id) {
-                if let Some(values) = self.get_values_from_db(self.devices[index].id()).await {
-                    self.devices[index].set_values(values);
-                    break;
-                }
-            }
-            counter += 1;
-            if counter > 5 {
-                printers::warn(format!("Не вдалось оновити конфігурацію {}", self.ip));
-                break;
-            }
-        }
-    }
-
-    pub async fn value_create(&mut self, parent_dev_id: i32) {
-        if self.devices.iter().any(|d| d.id() == parent_dev_id) {
-            self.update_devices(parent_dev_id).await;
-        }
-    }
-    pub async fn value_delete(&mut self, value_id: i32){
-        if let Some(device) = self.devices.iter().find(|d| d.contains_value_id(value_id)) {
-            self.update_devices(device.id()).await;
-        }
-    }
-
-    pub async fn value_update(&mut self, value_conf: &ValueUpdate){
-        let mut old = None;
-        if let Some(device) = self.devices.iter().find(|d| d.contains_value_id(value_conf.id)) {
-            old = Some(device.id());
-            self.update_devices(old.unwrap()).await;
-        }
-        if let Some(new) = value_conf.parent_device_id {
-            if let Some(old) = old {
-                if old == new {
-                    return;
-                }
-            }
-            if self.devices.iter().any(|d| d.id() == new) {
-                self.update_devices(new).await;
-            }
-        }
+        let _ = self.create_devices().await;
+        let msg = format!("Ноду оновлено! IP: {}, PORT: {}", &self.ip, &self.port);
+        printers::err(msg);
     }
 
     pub fn when_next(&mut self) -> u64 {
@@ -225,7 +144,7 @@ impl ReadMaster{
 
         let mut is_increase_timeout = false;
 
-        for step in device.get_pool() {
+        'step_loop: for step in device.get_pool() {
             if step.is_broken() {
                 failed_steps += 1;
                 continue
@@ -293,12 +212,9 @@ impl ReadMaster{
                                 break;
                             },
                             ModbusReadError::HeaderMisMatch => {
-                                if curr_try > 0 { // фільтрація на опитування попередніми пристроями!
-                                    is_increase_timeout = true;
-                                    printers::warn(format!("Збільшено таймаут для пристрою id: {}, адреса: {}, нода: {}", device.id(), device.address(), self.ip.clone()));
-                                    sleep(Duration::from_millis(50)).await;
-                                    break;
-                                }
+                                is_increase_timeout = true;
+                                sleep(Duration::from_millis(1000)).await;
+                                break 'step_loop;
                             }
                         }
                     }
@@ -311,8 +227,10 @@ impl ReadMaster{
                     break;
                 }
             };
+
         }
         if is_increase_timeout {
+            printers::warn(format!("Збільшено таймаут для пристрою id: {}, адреса: {}, нода: {}", device.id(), device.address(), self.ip.clone()));
             device.increase_timeout();
         }
 
@@ -333,8 +251,12 @@ impl ReadMaster{
                 Arc::new(res),
             )
         );
+
         device.finished();
         let send_result = self.to_controller.send(res).await;
+        if self.devices.len() > 1{
+            sleep(Duration::from_millis(20)).await;
+        }
         match send_result {
             Ok(_) => {
             },
@@ -391,6 +313,7 @@ impl ReadMaster{
     }
 
     async fn create_devices(&mut self) -> bool { // true = devices was created
+        self.devices.clear();
         let devices = self.get_devises().await;
         if devices.len() == 0 {
             return false;

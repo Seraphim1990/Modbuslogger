@@ -44,7 +44,7 @@ impl ReadStep{
             .duration_since(UNIX_EPOCH);
         match sys_time {
             Ok(duration) => {
-                let ts = duration.as_secs() as u64;
+                let ts = duration.as_secs() as i64;
                 self.values.iter()
                     .map( |value| value.get_value(&reg_list, ts))
                     .collect::<Vec<ModbusMeasure>>()
@@ -61,7 +61,7 @@ impl ReadStep{
             .duration_since(UNIX_EPOCH);
         match sys_time {
             Ok(duration) => {
-                let ts = duration.as_secs() as u64;
+                let ts = duration.as_secs() as i64;
                 self.values.iter()
                     .map( |value| value.fail(ts))
                     .collect::<Vec<ModbusMeasure>>()
