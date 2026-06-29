@@ -3,7 +3,11 @@ use tokio::sync::oneshot;
 use crate::messages::commands::{
     node::NodeCommand,
     device::DeviceCommand,
-    value::ValueCommand
+    value::ValueCommand,
+    users::UserCommand,
+    groups::GroupCommand,
+    sub_groups::SubGroupCommand,
+    asign::AssignGroupsAndValuesCommand
 };
 
 pub struct Command{
@@ -16,4 +20,8 @@ pub enum CommandType{
     NodeCommand(Arc<NodeCommand>),
     DeviceCommand(Arc<DeviceCommand>),
     ValueCommand(Arc<ValueCommand>),
+    UserCommand(Arc<UserCommand>),
+    GroupCommand(Arc<GroupCommand>),
+    SubGroupCommand(Arc<SubGroupCommand>),
+    AssignGroupsAndValuesCommand(Arc<AssignGroupsAndValuesCommand>),
 }

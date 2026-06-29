@@ -1,10 +1,10 @@
 use std::fs;
 use std::net::{IpAddr, SocketAddr};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct SocketConfig{
     ip: String,
     port: u16,

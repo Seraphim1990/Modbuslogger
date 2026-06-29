@@ -1,8 +1,6 @@
-use std::fmt::format;
 use std::sync::Arc;
 use sqlx::{MySql, Pool};
 use tokio::sync::mpsc;
-use crate::api::router::value::delete_value;
 use crate::db::schemas::device::*;
 use crate::db::schemas::node::NodeRead;
 use crate::messages::requests::device_request::*;
@@ -10,7 +8,6 @@ use crate::logger::printers;
 use crate::messages::commands::command::{Command, CommandType};
 use crate::messages::commands::device::DeviceCommand;
 use crate::db::worker::value_worker;
-use crate::db::schemas::value_unit::{ValueDelete, ValueRead};
 use crate::messages::config_event::{ConfigEvent, ConfigEventType};
 use crate::db::worker::node_worker::get_node_by_id;
 
@@ -25,7 +22,7 @@ pub fn command_device(pool: &Pool<MySql>, command: Command, tx_to_reader: mpsc::
                     if let DeviceCommand::Create(device) = device.as_ref() {
                         let res = create_device(&pool, device, tx_to_reader).await;
                         if tx.send(res).is_err() {
-                            let msg = "повернення калбеку DeviceCommand::Create".to_string();
+                            let msg = "Помилка повернення калбеку DeviceCommand::Create".to_string();
                             printers::err(msg)
                         }
                     }
@@ -37,7 +34,7 @@ pub fn command_device(pool: &Pool<MySql>, command: Command, tx_to_reader: mpsc::
                     if let DeviceCommand::Delete(device) = device.as_ref() {
                         let res = delete_device(&pool, device, tx_to_reader).await;
                         if tx.send(res).is_err() {
-                            let msg = format!("повернення калбеку DeviceCommand::Delete id: {}", device.id);
+                            let msg = format!("Помилка повернення калбеку DeviceCommand::Delete id: {}", device.id);
                             printers::err(msg)
                         }
                     }
@@ -49,7 +46,7 @@ pub fn command_device(pool: &Pool<MySql>, command: Command, tx_to_reader: mpsc::
                     if let DeviceCommand::Update(device) = device.as_ref() {
                         let res = update_device(&pool, device, tx_to_reader).await;
                         if tx.send(res).is_err() {
-                            let msg = format!("повернення калбеку DeviceCommand::Update id: {}", device.id);
+                            let msg = format!("Помилка повернення калбеку DeviceCommand::Update id: {}", device.id);
                             printers::err(msg)
                         }
                     }

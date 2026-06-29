@@ -21,7 +21,7 @@ pub async fn init_axum(from_api:  mpsc::Sender<MainMsg>, to_api: mpsc::Receiver<
         let addr = socket_addr::init_socket();
         let listener = TcpListener::bind(addr).await.expect("Помилка читання TcpListener");
 
-        let (to_ws_coord, rx_ws_coord) = mpsc::channel(32);
+        let (to_ws_coord, rx_ws_coord) = mpsc::channel(100);
 
         let app_state = AppState{
             from_api,
@@ -35,10 +35,14 @@ pub async fn init_axum(from_api:  mpsc::Sender<MainMsg>, to_api: mpsc::Receiver<
             .merge(router::devices::devices_router())
             .merge(router::value::values_router())
             .merge(router::measures::measures_router())
-            //.merge(router::root::root())
+            .merge(router::users::users_router())
+            .merge(router::user_group::user_group_router())
+            .merge(router::user_subgroups::user_subgroup_router())
+            .merge(router::assign::assign_router())
+            .merge(router::root::root())
             .merge(live_router()) // "/live_data"
             .with_state(app_state)
-            .layer(CorsLayer::permissive());;
+            .layer(CorsLayer::permissive());
 
         logger::printers::event(format!("Сервер запущено: {}", addr));
 

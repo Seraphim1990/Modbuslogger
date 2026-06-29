@@ -3,4 +3,6 @@ pub mod device;
 pub mod value_unit;
 pub mod measure;
 pub mod decoding_type;
-mod groups;
+pub mod users;
+pub mod user_groups;
+pub mod user_subgroups;

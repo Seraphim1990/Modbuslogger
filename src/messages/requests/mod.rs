@@ -2,5 +2,7 @@ pub mod request_struct;
 pub mod node_request;
 pub mod device_request;
 pub mod value_request;
-pub mod groups_request;
 pub mod measure_request;
+pub mod user_request;
+pub mod group_request;
+pub mod sub_group_request;

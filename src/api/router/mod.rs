@@ -5,3 +5,7 @@ pub mod decoding_type;
 pub mod root;
 pub mod measures;
 pub mod handle_get_request;
+pub mod users;
+pub mod user_group;
+pub mod user_subgroups;
+pub mod assign;

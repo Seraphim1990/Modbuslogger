@@ -4,6 +4,9 @@ use crate::messages::requests::{
     device_request::DeviceRequest,
     value_request::ValueRequest,
     measure_request::MeasureRequest,
+    user_request::UserRequest,
+    group_request::GroupRequest,
+    sub_group_request::SubGroupsRequest,
 };
 
 pub enum Request{
@@ -12,6 +15,7 @@ pub enum Request{
     GetValue(ValueRequest),
     GetDecodingType,
     GetMeasure(MeasureRequest),
-
-    GetLogicGroup
+    GetUser(UserRequest),
+    GetGroup(GroupRequest),
+    GetSubGroup(SubGroupsRequest),
 }
