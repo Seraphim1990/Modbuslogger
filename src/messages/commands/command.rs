@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::oneshot;
+use crate::db::schemas::tokens::RefreshToken;
 use crate::messages::commands::{
     node::NodeCommand,
     device::DeviceCommand,
@@ -7,7 +8,7 @@ use crate::messages::commands::{
     users::UserCommand,
     groups::GroupCommand,
     sub_groups::SubGroupCommand,
-    asign::AssignGroupsAndValuesCommand
+    asign::AssignGroupsAndValuesCommand,
 };
 
 pub struct Command{
@@ -24,4 +25,5 @@ pub enum CommandType{
     GroupCommand(Arc<GroupCommand>),
     SubGroupCommand(Arc<SubGroupCommand>),
     AssignGroupsAndValuesCommand(Arc<AssignGroupsAndValuesCommand>),
+    TokenUpdate(Arc<RefreshToken>)
 }

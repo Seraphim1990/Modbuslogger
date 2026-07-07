@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::reader::reader_loop::decoding_plugins::value_interface::{ValueInterface, RegType};
 use crate::reader::structs::modbus_measure::ModbusMeasure;
 use serde::{Deserialize, Serialize};

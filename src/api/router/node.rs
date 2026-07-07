@@ -1,5 +1,5 @@
-use axum::{extract::State, Json, extract::Path, Router};
-use axum::routing::{get, post, put};
+use axum::{extract::State, Json, extract::Path, Router, middleware};
+use axum::routing::{delete, get, post, put};
 use crate::db::schemas::node::*;
 use crate::api::init_axum::AppState;
 use axum::response::{IntoResponse, Response};
@@ -7,7 +7,7 @@ use axum::http::StatusCode;
 use crate::logger::printers;
 use std::net::IpAddr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use crate::messages::{
     main_msg::MainMsg,
     requests::request_struct::Request,
@@ -19,6 +19,7 @@ use crate::api::router::handle_get_request::{
     handle_get_request,
     check_send_message
 };
+use crate::api::router::middlewares::admin_middleware;
 
 pub fn node_router() -> Router<AppState> {
     Router::new()
@@ -26,7 +27,9 @@ pub fn node_router() -> Router<AppState> {
         .route("/nodes/get_node_by_ip/:ip", get(get_node_by_ip))
         .route("/nodes/create", post(create_node))
         .route("/nodes/update/:id", put(update_node))
-        .route("/nodes/:id", get(get_node_by_id).delete(delete_node))
+        .route("/nodes/delete/:id", delete(delete_node))
+        .route_layer(middleware::from_fn(admin_middleware))
+        .route("/nodes/:id", get(get_node_by_id))
 }
 
 pub async fn get_nodes(State(state): State<AppState>) -> impl IntoResponse {

@@ -8,6 +8,7 @@ use crate::messages::requests::{
     group_request::GroupRequest,
     sub_group_request::SubGroupsRequest,
 };
+use crate::messages::requests::tokens_request::TokensRequest;
 
 pub enum Request{
     GetNode(NodeRequest),
@@ -18,4 +19,5 @@ pub enum Request{
     GetUser(UserRequest),
     GetGroup(GroupRequest),
     GetSubGroup(SubGroupsRequest),
+    GetToken(TokensRequest),
 }

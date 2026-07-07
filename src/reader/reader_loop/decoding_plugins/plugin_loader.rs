@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use serde_json::Value;
 use crate::reader::reader_loop::decoding_plugins::value_interface::{RegType, ValueInterface};
 use crate::reader::reader_loop::decoding_plugins::{
     coma_shift::ComaShift,

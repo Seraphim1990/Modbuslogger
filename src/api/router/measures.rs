@@ -1,21 +1,19 @@
-use axum::{extract::{Path, Query, State}, http::StatusCode, response::{Html, IntoResponse}, routing::{delete, get, post}, Json, Router};
-
+use axum::{extract::{Query, State}, http::StatusCode, response::{IntoResponse}, routing::{get}, Json, Router};
 use serde::{Deserialize};
 
 use crate::api::init_axum::AppState;
 use crate::logger::printers;
 use tokio::sync::oneshot;
 use crate::messages::requests::{
-    measure_request::{MeasureRequest, MeasureResponse, HashedValue},
+    measure_request::{MeasureRequest},
     request_struct::Request
 };
-use crate::api::router::handle_get_request::{check_send_message, handle_get_request};
+use crate::api::router::handle_get_request::{check_send_message};
 use crate::messages::main_msg::MainMsg;
 
 pub fn measures_router() -> Router<AppState> {
     Router::new()
         .route("/measure/", get(get_measures))
-        // .route("/measure/chart", get(generate_chart))
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,13 +46,12 @@ impl MeasureQuery {
 }
 #[derive(Debug, Deserialize)]
 struct GetMeasures{
+    values_id: Vec<i32>,
     from: i64,
     to: i64,
-    values_id: Vec<i32>,
 }
 
 async fn get_measures(State(state): State<AppState>, Query(params): Query<MeasureQuery>) -> impl IntoResponse {
-
     let request = match params.to_request() {
         Ok(request) => request,
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response()
@@ -73,9 +70,9 @@ async fn get_measures(State(state): State<AppState>, Query(params): Query<Measur
     if let Err(e) = check_send_message(&state.from_api, msg).await{
         return e.into_response();
     };
-
     match rx.await {
-        Ok(Ok(res)) => {(StatusCode::OK, Json(res)).into_response()},
+        Ok(Ok(res)) => {
+            (StatusCode::OK, Json(res)).into_response()},
         Ok(Err(_)) => {
             let msg = "Помилка читання бази данних, детальніше в логах".to_string();
             printers::err(msg.clone());
@@ -88,6 +85,7 @@ async fn get_measures(State(state): State<AppState>, Query(params): Query<Measur
         }
     }
 }
+
 /*
 #[derive(Debug, Deserialize)]
 pub struct ChartQuery {

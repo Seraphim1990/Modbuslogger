@@ -8,7 +8,7 @@ use sqlx::FromRow;
   PRIMARY KEY (`id`),
  */
 
-#[derive(Serialize, Deserialize, FromRow)]
+#[derive(Serialize, Deserialize, FromRow, Debug)]
 pub struct UserSubGroupRead {
     pub id: i32,
     pub group_id: i32,
@@ -34,4 +34,10 @@ pub struct UserSubGroupUpdate {
 #[derive(Serialize, Deserialize)]
 pub struct UserSubGroupDelete{
     pub id:i32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct GetSubgroupAssign{
+    pub id: i32,
+    pub values_id: Vec<i32>,
 }

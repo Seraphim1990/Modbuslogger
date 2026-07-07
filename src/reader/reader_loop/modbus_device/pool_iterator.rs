@@ -153,7 +153,7 @@ impl PollValueIterator {
         Self::group_sort(input))
     }
 
-    fn group_sort(mut values: InitPlugins) -> Vec<ReadStep> {
+    fn group_sort(values: InitPlugins) -> Vec<ReadStep> {
         let registers = Self::reg_sort(values.registers);
         let reg_type = values.reg_type;
         let mut values = values.values;

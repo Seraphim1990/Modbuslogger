@@ -1,4 +1,3 @@
-use chrono::NaiveDateTime;
 use serde::{Serialize, Deserialize};
 use sqlx::FromRow;
 

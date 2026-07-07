@@ -327,7 +327,7 @@ async fn update_node(pool: &Pool<MySql>, node: &NodeUpdate, tx_to_reader: mpsc::
         None => &"".to_string(),
     };
 
-    let res = sqlx::query(
+    sqlx::query(
         "UPDATE nodes SET ip = COALESCE(?, ip), port = COALESCE(?, port), description = COALESCE(?, description) WHERE id = ?"
     )
         .bind(&node.ip)

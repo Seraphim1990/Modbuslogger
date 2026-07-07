@@ -6,3 +6,4 @@ pub mod decoding_type;
 pub mod users;
 pub mod user_groups;
 pub mod user_subgroups;
+pub mod tokens;

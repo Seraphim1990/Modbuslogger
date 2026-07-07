@@ -1,6 +1,5 @@
 // read_master_struct.rs
 use std::io::ErrorKind;
-use std::ops::Deref;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
@@ -16,10 +15,8 @@ use crate::db::schemas::{
     device::DeviceRead,
     value_unit::ValueRead
 };
-use crate::db::schemas::device::DeviceCreate;
-use crate::db::schemas::value_unit::ValueUpdate;
 use crate::logger::printers;
-use crate::messages::requests::device_request::{DeviceRequest, GetDeviceByNode, GetDeviceById};
+use crate::messages::requests::device_request::{DeviceRequest, GetDeviceByNode};
 use crate::messages::requests::request_struct::Request;
 use crate::messages::requests::value_request::{GetByDeviceId, ValueRequest};
 use crate::messages::events::{
@@ -80,7 +77,7 @@ impl ReadMaster{
         }
         let _ = self.create_devices().await;
         let msg = format!("Ноду оновлено! IP: {}, PORT: {}", &self.ip, &self.port);
-        printers::err(msg);
+        printers::event(msg);
     }
 
     pub fn when_next(&mut self) -> u64 {
@@ -120,7 +117,7 @@ impl ReadMaster{
     }
 
     async fn read(&mut self) {
-        let mut device = &mut self.devices[self.current_devise_index.unwrap()];
+        let device = &mut self.devices[self.current_devise_index.unwrap()];
 
         if !device.is_active() {
             return;
@@ -137,7 +134,7 @@ impl ReadMaster{
         let total_steps = device.total_steps();
 
         let mut total_result = Vec::new();
-        let mut timeout_duration = device.timeout();
+        let timeout_duration = device.timeout();
         let retry_count = device.retry_count() as u64;
 
         let mut failed_steps = 0;
@@ -320,7 +317,7 @@ impl ReadMaster{
         }
         let mut devices_units = Vec::with_capacity(devices.len());
         for device_config in devices {
-            let mut new_dev_unit = self.get_device_from_db(device_config).await;
+            let new_dev_unit = self.get_device_from_db(device_config).await;
             if let Some(new_dev_unit) = new_dev_unit {
                 devices_units.push(new_dev_unit);
             }
@@ -374,7 +371,7 @@ impl ReadMaster{
 
     async fn get_devises(&mut self) -> Vec<DeviceRead> {
         let mut counter = 0;
-        let mut devices = Vec::new();
+        let devices ;
 
         loop {
             let (tx, rx) = oneshot::channel();
@@ -426,57 +423,6 @@ impl ReadMaster{
         devices
     }
 
-    async fn get_one_device_form_db(&mut self, id: i32) -> Option<ModbusDeviceUnit> {
-        let (tx, rx) = oneshot::channel();
-
-        let dev_request = GetDeviceById {
-            id: self.id,
-            request_channel: tx,
-        };
-        let dev_request = DeviceRequest::GetDeviceById(dev_request);
-        let dev_request = Request::GetDevice(dev_request);
-        let dev_request = MainMsg::Request(dev_request);
-        let send_res = self.to_controller.send(dev_request).await;
-        match send_res {
-            Ok(_) => {},
-            Err(e) => {
-                let msg = format!("Помилка відправки повідомлення до контролера при створенні пристроїв для {}\nErr: {}", &self.ip, e.to_string());
-                printers::err(msg);
-            }
-        }
-
-        let res = rx.await;
-
-        let device = match res {
-            Ok(msg) => {
-                match msg {
-                    Ok(dev_res) => {
-                        match dev_res {
-                            Some(dev_) => dev_,
-                            None => return None
-                        }
-                    }
-                    Err(e) => {
-                        let msg = format!("Помилка отримання даних від бази даних для {}", &self.ip);
-                        printers::err(msg);
-                        return None
-                    }
-                }
-            },
-            Err(e) => {
-                let msg = format!("Помилка каналу отримування відповіді для {} від бази: {}", &self.ip, e);
-                printers::err(msg);
-                return None
-            }
-        };
-
-        if let Some(new_device) = self.get_device_from_db(device).await {
-            Some(new_device)
-        } else {
-            None
-        }
-    }
-
     fn create_value_request(dev_id: i32, chan: oneshot::Sender<Result<Vec<ValueRead>, ()>>) -> MainMsg {
         let val_request = GetByDeviceId {
             device_id: dev_id,
@@ -502,14 +448,18 @@ impl ReadMaster{
 
     async fn start_connecting(&mut self) {
         self.send_connecting_msg(NodeEventType::Connecting).await;
+        printers::event(format!("Підключення до ip: {}", &self.ip));
     }
     async fn connecting_finished(&mut self) {
         self.send_connecting_msg(NodeEventType::Connected).await;
+        printers::event(format!("Підключено до ip: {}", &self.ip));
     }
 
     async fn disconnecting(&mut self) {
         self.last_connecting_time = Self::get_time() + 60000;
         self.send_connecting_msg(NodeEventType::UnConnected).await;
+        printers::err(format!("Закрито з'єднання ip: {}", &self.ip));
+        self.ctx = None
     }
     async fn send_connecting_msg(&mut self, msg: NodeEventType) {
         self.ctx_state = msg;

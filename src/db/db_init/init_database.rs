@@ -1,5 +1,4 @@
 use sqlx::{MySql, MySqlPool, Pool};
-use crate::db::db_init::code_decode::encrypt_string;
 
 pub async fn init_database(pool: &MySqlPool, addr: &String, port: u16, user: &String, pass: &String) -> Result<(), String> {
 
@@ -28,7 +27,8 @@ pub async fn init_database(pool: &MySqlPool, addr: &String, port: u16, user: &St
     init_decoding_type(&pool).await?;
     init_value_units(&pool).await?;
     init_measures(&pool).await?;
-    init_subgroup_values(&pool).await
+    init_subgroup_values(&pool).await?;
+    init_refresh_tokens(&pool).await
 }
 async fn init_value_units(pool: &Pool<MySql>) -> Result<(), String>{
     /*
@@ -322,6 +322,29 @@ ON DUPLICATE KEY UPDATE `role_name`=`role_name`;
     VALUES ('1', 'admin'), ('2', 'superuser'), ('3','user'), ('4','servise')
     ON DUPLICATE KEY UPDATE `role_name` = `role_name`;"#;
     send_query(query, &pool, "Створення ролей").await
+}
+
+async fn init_refresh_tokens(pool: &Pool<MySql>) -> Result<(), String> {
+    /*
+    CREATE TABLE refresh_tokens (
+    user_id     BIGINT PRIMARY KEY,
+    user_role_id INT NOT NULL, -- Додаємо поле для ID ролі
+    token_hash  VARCHAR(255) NOT NULL, -- Для InnoDB краще VARCHAR замість TEXT, якщо це індекс або UUID
+    created_at  BIGINT NOT NULL,
+    expires_at  BIGINT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+     */
+
+    let query = r#"
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+    user_id     BIGINT PRIMARY KEY,
+    user_role_id INT NOT NULL, -- Додаємо поле для ID ролі
+    token_hash  VARCHAR(255) NOT NULL, -- Для InnoDB краще VARCHAR замість TEXT, якщо це індекс або UUID
+    created_at  BIGINT NOT NULL,
+    expires_at  BIGINT NOT NULL
+    )ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    "#;
+    send_query(query, pool, "Створення токенів").await
 }
 
 async fn send_query(query: &str, pool: &Pool<MySql>, msg: &str) -> Result<(), String> {

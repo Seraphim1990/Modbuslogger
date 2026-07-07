@@ -1,6 +1,5 @@
 use std::fs;
-use std::sync::Arc;
-use sqlx::{MySql, MySqlPool, Pool};
+use sqlx::{MySql, Pool};
 use crate::db::db_init::code_decode::decrypt_string;
 
 use serde::{Deserialize, Serialize};

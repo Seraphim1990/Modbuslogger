@@ -108,7 +108,7 @@ async fn get_all_users(pool: &Pool<MySql>) -> Result<Vec<UserRead>, ()> {
     Ok(users)
 }
 
-async fn verify_user_credentials(pool: &Pool<MySql>, credentials: &LoginRequest) -> Result<bool, ()> {
+async fn verify_user_credentials(pool: &Pool<MySql>, credentials: &LoginRequest) -> Result<Option<UserRead>, ()> {
     // 1. Шукаємо користувача ТІЛЬКИ за іменем
     let user_opt = sqlx::query_as::<_, UserRead>(
         "SELECT id, username, password_hash, role_id, is_active FROM users WHERE username = ?"
@@ -119,15 +119,7 @@ async fn verify_user_credentials(pool: &Pool<MySql>, credentials: &LoginRequest)
         .map_err(|e| {
             printers::err(format!("Помилка бази даних при авторизації: {e}"));
         })?;
-    let user = match user_opt {
-        Some(u) if u.is_active => u,
-        _ => return Ok(false), // Повертаємо false (безпечніше казати "невірний логін або пароль", ніж "юзера не існує")
-    };
-    if user.password_hash == credentials.password_raw {
-        return Ok(true);
-    }
-
-    Ok(false)
+    Ok(user_opt)
 }
 
 async fn create_user(pool: &Pool<MySql>, user: &UserCreate) -> Result<(), String> {
@@ -141,9 +133,7 @@ async fn create_user(pool: &Pool<MySql>, user: &UserCreate) -> Result<(), String
         .bind(true)
         .execute(pool).await;
 
-    check_db_write_user_err(insert_res)?;
-
-    Ok(())
+    check_db_write_user_err(insert_res)
 }
 async fn update_user(pool: &Pool<MySql>, user: &UserUpdate) -> Result<(), String> {
     if let Some(role_id) = user.role_id {
@@ -155,7 +145,7 @@ async fn update_user(pool: &Pool<MySql>, user: &UserUpdate) -> Result<(), String
                  password_hash = COALESCE(?, password_hash),
                  role_id = COALESCE(?, role_id),
                  is_active = ?
-             WHERE id = ?)")
+             WHERE id = ?")
         .bind(&user.username)
         .bind(&user.password_hash)
         .bind(user.role_id)
@@ -163,8 +153,7 @@ async fn update_user(pool: &Pool<MySql>, user: &UserUpdate) -> Result<(), String
         .bind(user.id)
         .execute(pool).await;
 
-    check_db_write_user_err(update_res)?;
-    Ok(())
+    check_db_write_user_err(update_res)
 }
 
 async fn delete_user(pool: &Pool<MySql>, id: i32) -> Result<(), String> {

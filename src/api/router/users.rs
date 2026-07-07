@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use crate::api::init_axum::AppState;
-use axum::{extract::State, Json, extract::Path, Router};
+use axum::{extract::State, Json, extract::Path, Router, middleware};
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
-use crate::db::schemas::users::{UserCreate, UserRead, LoginRequest, UserUpdate, UserDelete};
+use crate::db::schemas::users::{UserCreate, UserUpdate, UserDelete};
 use crate::messages::main_msg::MainMsg;
 use crate::messages::requests::{
     request_struct::Request,
@@ -12,7 +12,8 @@ use crate::messages::requests::{
 use tokio::sync::oneshot;
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post, put};
-use crate::api::router::handle_get_request::{check_send_message, handle_get_request};
+use crate::api::router::handle_get_request::{check_send_message};
+use crate::api::router::middlewares::admin_middleware;
 use crate::messages::commands::command::{
     CommandType, Command
 };
@@ -25,12 +26,14 @@ pub fn users_router() -> Router<AppState> {
         .route("/users/get_by_id/:id", get(get_user_by_id))
         .route("/users/update/:id", put(update_user))
         .route("/users/delete/:id", delete(delete_user))
+        .route_layer(middleware::from_fn(admin_middleware))
 }
 
 #[derive(Serialize, Deserialize)]
-struct UserSendRequest{
-    id:i32,
-    name:String,
+pub struct UserSendRequest{
+    pub id:i32,
+    pub name:String,
+    pub role_id: i32
 }
 
 async fn get_user_by_id(State(state): State<AppState>, Path(id): Path<i32>) -> impl IntoResponse {
@@ -52,7 +55,7 @@ async fn get_user_by_id(State(state): State<AppState>, Path(id): Path<i32>) -> i
     match res {
         Ok(Ok(user)) => {
             if let Some(user) = user{
-                (StatusCode::OK, Json(UserSendRequest{id: user.id, name: user.username})).into_response()
+                (StatusCode::OK, Json(UserSendRequest{id: user.id, name: user.username, role_id: user.role_id})).into_response()
             } else {
                 (StatusCode::NOT_FOUND, "User not found").into_response()
             }
@@ -78,7 +81,7 @@ async fn get_all_users(State(state): State<AppState>) -> impl IntoResponse {
     let res = rx.await;
     match res {
         Ok(Ok(users)) => {
-            let users = users.into_iter().map(|user|UserSendRequest{id: user.id, name: user.username}).collect::<Vec<_>>();
+            let users = users.into_iter().map(|user|UserSendRequest{id: user.id, name: user.username, role_id: user.role_id}).collect::<Vec<_>>();
             (StatusCode::OK, Json(users)).into_response()
         },
         Ok(Err(_)) => {

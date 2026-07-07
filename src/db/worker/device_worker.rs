@@ -96,7 +96,7 @@ pub fn devise_get(pool: &Pool<MySql>, request: DeviceRequest) {
                 let send_res = tx.send(res);
                 match send_res {
                     Ok(_) => {},
-                    Err(e) => {
+                    Err(_) => {
                         printers::warn(String::from("Помилка відправки DeviceRequest::GetDeleted"));
                     }
                 };
@@ -360,6 +360,9 @@ async fn create_device(pool: &Pool<MySql>, device: &DeviceCreate, tx_to_reader: 
             msg
         })?;
 
+    let msg = format!("Створено пристрій по запиту: {:?}", device);
+    printers::event(msg);
+
     if let Ok(Some(node))= get_node_by_id(pool, device.parent_node_id).await {
         let change_config = ConfigEvent {
             event_type: ConfigEventType::Update,
@@ -371,9 +374,6 @@ async fn create_device(pool: &Pool<MySql>, device: &DeviceCreate, tx_to_reader: 
     } else {
         printers::warn("Помилка отримання ноди для оновлення".to_string());
     }
-
-    let msg = format!("Створено пристрій по запиту: {:?}", device);
-    printers::event(msg);
 
     Ok(())
 }

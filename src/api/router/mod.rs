@@ -9,3 +9,5 @@ pub mod users;
 pub mod user_group;
 pub mod user_subgroups;
 pub mod assign;
+pub mod auth;
+pub mod middlewares;

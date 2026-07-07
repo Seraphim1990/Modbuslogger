@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use crate::reader::reader_loop::decoding_plugins::value_interface::{ValueInterface, RegType};
 use crate::reader::structs::modbus_measure::ModbusMeasure;
@@ -38,7 +37,7 @@ impl ValueInterface for SatecDoubleRegistersInt32 {
     fn init(&mut self, settings: String, id: i32, logging: bool) -> Vec<i32> {
         let setting = serde_json::from_str(settings.as_str());
 
-        let mut init_data: SatecDoubleRegistersSerde;
+        let init_data: SatecDoubleRegistersSerde;
 
         match setting {
             Ok(s) => init_data = s,
@@ -90,7 +89,7 @@ impl ValueInterface for SatecDoubleRegistersInt32 {
         if reg_list.len() <= self.hi_pos_register as usize || reg_list.len() <= self.lo_pos_register as usize { // заглушка для тестування, це ж довбаний раст
             panic!("Паніка при декодуванні значення {}, вихід за межі вектору", &self.tag);
         }
-        let mut measure = 0.0_f64;
+        let measure;
         let mut hi_data = reg_list[self.hi_pos_register as usize] as f64;
         let lo_data = reg_list[self.lo_pos_register as usize] as f64;
         if self.is_signed {

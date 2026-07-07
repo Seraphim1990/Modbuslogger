@@ -7,15 +7,17 @@ use crate::db::schemas::{
     value_unit::ValueRead,
     user_subgroups::UserSubGroupRead
 };
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct UiUserSubGroupsRead {
     pub group_state: UserSubGroupRead,
     pub values: Vec<ValueRead>,
 }
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct UiUserGroupRead {
     pub id: i32,
     pub sub_groups: Vec<UiUserSubGroupsRead>,
+    pub nodes: Vec<i32>,
+    pub devices: Vec<i32>,
 }
 /*
   `id` int NOT NULL AUTO_INCREMENT,

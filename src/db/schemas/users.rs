@@ -24,7 +24,7 @@ pub struct LoginRequest {
     pub password_raw: String, // Пароль у чистому вигляді, який ввів користувач
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct UserUpdate {
     pub id: i32,
     pub username: Option<String>,

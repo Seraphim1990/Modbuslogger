@@ -17,5 +17,5 @@ pub struct UserGetAll  {
 
 pub struct GetVerifyRequest {
     pub user: LoginRequest,
-    pub request_channel: Sender<Result<bool, ()>>,
+    pub request_channel: Sender<Result<Option<UserRead>, ()>>,
 }

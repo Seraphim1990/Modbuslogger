@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use axum::{extract::State, Json, extract::Path, Router};
+use axum::{extract::State, Json, extract::Path, Router, middleware};
 use axum::routing::{get, post, put, delete};
 use crate::db::schemas::value_unit::*;
 use crate::api::init_axum::AppState;
@@ -18,6 +18,7 @@ use crate::messages::{
     commands::command::{Command, CommandType},
     commands::value::ValueCommand,
 };
+use crate::api::router::middlewares::admin_middleware;
 
 pub fn values_router() -> Router<AppState> {
     Router::new()
@@ -27,6 +28,7 @@ pub fn values_router() -> Router<AppState> {
         .route("/values/get_by_parent_id/:id", get(get_by_parent_id))
         .route("/values/update/:id", put(update_value))
         .route("/values/delete/:id", delete(delete_value))
+        .route_layer(middleware::from_fn(admin_middleware))
 }
 
 pub async fn get_all_values(State(state): State<AppState>) -> impl IntoResponse {

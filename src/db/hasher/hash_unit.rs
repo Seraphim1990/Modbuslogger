@@ -82,6 +82,7 @@ impl ValueHasher {
     }
 
     pub fn get_hashed(&self, from: i64, to: i64) -> Option<Vec<HashedValue>> {
+        
         if from >= to || self.size == 0 {
             return None;
         }

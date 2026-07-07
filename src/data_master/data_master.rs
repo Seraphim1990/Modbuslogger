@@ -1,10 +1,7 @@
-use std::sync::Arc;
 use crate::messages::main_msg::MainMsg;
 use tokio::sync::mpsc;
-use crate::db::schemas::node::NodeCreate;
 use crate::logger::*;
-use crate::messages::commands::command::{Command, CommandType};
-use crate::messages::config_event::{ConfigEvent, ConfigEventType};
+use crate::messages::config_event::ConfigEvent;
 
 pub async fn run_data_master(mut from_api: mpsc::Receiver<MainMsg>, to_api: mpsc::Sender<MainMsg>, // TODO to_api change to broadcast!
                              mut from_reader: mpsc::Receiver<MainMsg>, to_reader: mpsc::Sender<ConfigEvent>,

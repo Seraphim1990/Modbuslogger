@@ -1,27 +1,8 @@
-use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
-    },
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
 use tokio::sync::mpsc;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
-use crate::api::init_axum::AppState;
 use crate::logger::printers;
-
-use crate::messages::{
-    main_msg::MainMsg,
-    events::{
-        event::Event,
-        node_event::NodeEvent,
-        device_event::DeviceEvent
-    }
-};
 use crate::messages::events::device_event::DeviceEventType;
 use crate::messages::events::node_event::NodeEventType;
 

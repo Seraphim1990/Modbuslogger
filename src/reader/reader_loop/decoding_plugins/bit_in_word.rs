@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::reader::reader_loop::decoding_plugins::value_interface::{ValueInterface, RegType};
 use crate::reader::structs::modbus_measure::ModbusMeasure;
 
@@ -32,7 +31,7 @@ impl ValueInterface for BitInWord {
 
         let setting = serde_json::from_str(settings.as_str());
 
-        let mut init_data: BitInWordSerde;
+        let init_data: BitInWordSerde;
 
         match setting {
             Ok(s) => init_data = s,

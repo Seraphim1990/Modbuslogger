@@ -1,10 +1,15 @@
 use tokio::sync::oneshot::Sender;
-use crate::db::schemas::user_subgroups::UserSubGroupRead;
+use crate::db::schemas::user_subgroups::{
+    UserSubGroupRead,
+    GetSubgroupAssign
+};
+
 
 pub enum SubGroupsRequest {
     GetByGroupId(GetByGroupId),
     GetById(GetById),
     GetAll(GetAll),
+    GetAssign(GetAssigns)
 }
 
 pub struct GetByGroupId  {
@@ -19,4 +24,9 @@ pub struct GetById {
 
 pub struct GetAll {
     pub request_channel: Sender<Result<Vec<UserSubGroupRead>, ()>>,
+}
+
+pub struct GetAssigns {
+    pub groups_ids: Vec<i32>,
+    pub request_channel: Sender<Result<Vec<GetSubgroupAssign>, ()>>,
 }

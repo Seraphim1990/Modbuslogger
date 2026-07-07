@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use crate::api::init_axum::AppState;
-use axum::{extract::State, Json, extract::Path, Router};
+use axum::{extract::State, Json, extract::Path, Router, middleware};
 use axum::response::IntoResponse;
 use tokio::sync::oneshot;
 use axum::http::StatusCode;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, post};
 use crate::api::router::handle_get_request::check_send_message;
+use crate::api::router::middlewares::admin_middleware;
 use crate::messages::commands::command::{
     CommandType, Command
 };
@@ -18,6 +19,7 @@ pub fn assign_router() -> Router<AppState> {
         .route("/assign/values", post(create_assign_values))
         .route("/assign/clean/users/:user_id", delete(clean_group_assignments))
         .route("/assign/clean/subgroups/:subgroup_id", delete(clean_values_assignments))
+        .route_layer(middleware::from_fn(admin_middleware))
 }
 
 async fn create_assign_group(State(state): State<AppState>, Json(payload): Json<AssignGroupsCommand>) -> impl IntoResponse {

@@ -1,10 +1,11 @@
-use std::panic;
 use messages::main_msg::MainMsg;
 use tokio::io::{AsyncBufReadExt, BufReader as TokioBufReader};
 use tokio::sync::mpsc;
 use crate::logger::printers;
-use crate::messages::commands::command::CommandType;
 use crate::messages::config_event::ConfigEvent;
+
+use tokio::time::{sleep_until, Instant};
+use chrono::{Local, Days};
 
 pub mod db;
 pub mod logger;
@@ -84,6 +85,28 @@ async fn main() {
         let (to_db_tx, to_db_rx) = mpsc::channel::<MainMsg>(100);
         let (from_db_tx, from_db_rx) = mpsc::channel::<ConfigEvent>(100);
 
+        let console_cleaner = tokio::spawn(async {
+                loop {
+                    let now = Local::now();
+
+                    let next_midnight = now
+                        .date_naive()
+                        .checked_add_days(Days::new(1))
+                        .unwrap()
+                        .and_hms_opt(0, 0, 0)
+                        .unwrap();
+
+                    let duration = (next_midnight - now.naive_local())
+                        .to_std()
+                        .unwrap();
+
+                    sleep_until(Instant::now() + duration).await;
+
+                    print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
+                    printers::warn("Очищення консолі".to_string()); //
+                }
+        });
+
         let mut api_handler = tokio::spawn(async move {
             api::init_axum::init_axum(from_api_tx, to_api_rx).await;
         });
@@ -104,7 +127,7 @@ async fn main() {
 
             api_drop = &mut api_handler => {
                 match api_drop {
-                    Ok(_) => {printers::warn(String::from("API упав без помилки"))},
+                    Ok(_) => {printers::warn("API несподівано завершився".to_string())},
                     Err(e) => {
                         let msg = format!("API упав з помилкою : {e}");
                         printers::warn(msg);
@@ -113,7 +136,7 @@ async fn main() {
             }
             db_drop = &mut db_handler => {
                 match db_drop {
-                    Ok(_) => {printers::warn(String::from("Воркер DB упав без помилки"))},
+                    Ok(_) => {printers::warn("Воркер DB упав без помилки".to_string())},
                     Err(e) => {
                         let msg = format!("Воркер DB упав з помилкою : {e}");
                         printers::warn(msg);
@@ -122,7 +145,7 @@ async fn main() {
             }
             data_master_drop = &mut data_master_handler => {
                 match data_master_drop {
-                    Ok(_) => {printers::warn(String::from("Контролер даних упав без помилки"))},
+                    Ok(_) => {printers::warn("Контролер даних упав без помилки".to_string())},
                     Err(e) => {
                         let msg = format!("Контролер даних упав з помилкою : {e}");
                         printers::warn(msg);
@@ -131,7 +154,7 @@ async fn main() {
             }
             reader_drop = &mut reader_handler => {
                 match reader_drop {
-                    Ok(_) => {printers::warn(String::from("Опитувач упав без помилки"))},
+                    Ok(_) => {printers::warn("Опитувач упав без помилки".to_string())},
                     Err(e) => {
                         let msg = format!("Опитувач упав з помилкою : {e}");
                         printers::warn(msg);
@@ -140,6 +163,7 @@ async fn main() {
             }
         }
         // якшо сюда дійде то пиздець!!!
+        console_cleaner.abort();
         reader_handler.abort();
         data_master_handler.abort();
         db_handler.abort();

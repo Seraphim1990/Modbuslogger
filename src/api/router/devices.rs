@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use axum::{extract::State, Json, extract::Path, Router};
+use axum::{extract::State, Json, extract::Path, Router, middleware};
 use axum::routing::{get, post, put, delete};
 use crate::db::schemas::device::*;
 use axum::response::{IntoResponse, Response};
@@ -21,15 +21,17 @@ use crate::api::router::handle_get_request::{
     handle_get_request,
     check_send_message
 };
+use crate::api::router::middlewares::admin_middleware;
 
 pub fn devices_router() -> Router<AppState> {
     Router::new()
         .route("/devices/get_all", get(get_devices))
         .route("/devices/get_by_parent_id/:id", get(get_devices_by_parent_id))
-        .route("/devices/get_device/:id", get(get_device))
         .route("/devices/create", post(create_devices))
         .route("/devices/update/:id", put(update_device))
         .route("/devices/delete/:id", delete(delete_device))
+        .route_layer(middleware::from_fn(admin_middleware))
+        .route("/devices/get_device/:id", get(get_device))
 }
 
 pub async fn create_devices(State(state): State<AppState>, Json(payload): Json<DeviceCreate>) -> impl IntoResponse {

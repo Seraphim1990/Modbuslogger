@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::fs;
 use std::net::Ipv4Addr;
-use crate::db::states::{init_db, DBConf};
+use crate::db::states::{DBConf};
 use crate::db::db_init::code_decode::*;
 use crate::db::db_init::init_database;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
-use sqlx::{MySql, MySqlPool, Pool};
+use sqlx::MySqlPool;
 
 pub async fn init_db_if_need_it() {
     if !Path::new("configs/db.toml").exists() {
@@ -125,7 +125,7 @@ async fn create_config() {
         // наче усе ок, пробуємо під'єднатися
         let url = format!("mysql://{}:{}@{}:{}", &db_user, &db_password, &db_address, db_port);
         match MySqlPool::connect(url.as_str()).await {
-            Ok(pool) => {
+            Ok(_) => {
                 let db_config = DBConf {
                     db_user,
                     db_password,

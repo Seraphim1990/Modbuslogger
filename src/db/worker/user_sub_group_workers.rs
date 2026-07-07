@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use sqlx::{MySql, Pool};
+use sqlx::{FromRow, MySql, Pool};
 use crate::messages::commands::{
     command::{Command, CommandType},
     sub_groups::SubGroupCommand
@@ -82,6 +82,15 @@ pub fn user_sub_group_get(pool: &Pool<MySql>, request: SubGroupsRequest){
                 }
             });
         },
+        SubGroupsRequest::GetAssign(request) => {
+            tokio::spawn(async move {
+                let tx = request.request_channel;
+                let res = ui_get_subgroups_assign(&pool, &request.groups_ids).await;
+                if tx.send(res).is_err() {
+                    printers::err("Помилка відправки калбеку SubGroupsRequest::GetAssign".to_string())
+                }
+            });
+        }
     }
 }
 
@@ -163,4 +172,27 @@ async fn delete_subgroup(pool: &Pool<MySql>, id: i32) -> Result<(), String> {
             msg
         })?;
     Ok(())
+}
+
+#[derive(FromRow)]
+struct ValUnitId { value_unit_id: i32 }
+// UI
+async fn ui_get_subgroups_assign(pool: &Pool<MySql>, subgroup_ids: &Vec<i32>) -> Result<Vec<GetSubgroupAssign>, ()> {
+    let mut assignments = Vec::with_capacity(subgroup_ids.len());
+    for subgroup in subgroup_ids.iter() {
+        let val_ids = sqlx::query_as::<_, ValUnitId>("SELECT value_unit_id FROM subgroup_values WHERE subgroup_id = ?")
+            .bind(subgroup)
+            .fetch_all(pool)
+            .await
+            .map_err(|e|{
+                printers::err(format!("Помилка отримання значень для субгруп: {}", e));
+            })?;
+        assignments.push(
+            GetSubgroupAssign{
+                    id: *subgroup,
+                    values_id: val_ids.iter().map(|val_id|val_id.value_unit_id).collect()
+            }
+        );
+    }
+    Ok(assignments)
 }

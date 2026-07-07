@@ -1,10 +1,13 @@
-use axum::Router;
+use axum::{middleware, Router};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use crate::api::router;
 use crate::messages::main_msg::MainMsg;
-use crate::api::web_sockets::{live_socket_unit::CoordUnitWebSocketData, live_socket::live_router, live_socket_unit, web_sock_coord};
-use tower_http::cors::{CorsLayer, Any};
+use crate::api::web_sockets::{live_socket_unit::CoordUnitWebSocketData, live_socket::live_router,  web_sock_coord};
+use tower_http::cors::CorsLayer;
+use serde::{Deserialize, Serialize};
+use crate::api::router::middlewares::{auth_middleware};
+
 
 
 use crate::api::sockets::socket_addr;
@@ -12,9 +15,18 @@ use crate::logger;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub from_api: mpsc::Sender<MainMsg>, // TODO додати канал для координатора вебсокетів
+    pub from_api: mpsc::Sender<MainMsg>,
     pub to_ws_coord: mpsc::Sender<CoordUnitWebSocketData>
 }
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Claims {
+    pub id: i32,
+    pub role_id: i32,
+    pub exp: i64,
+    pub iat: i64,
+}
+
+pub const JWT_KEY: &[u8] = b"^dfqw)cxzc*F)NJKwerx^vxLeNlsd&";
 
 pub async fn init_axum(from_api:  mpsc::Sender<MainMsg>, to_api: mpsc::Receiver<MainMsg>) {
 
@@ -30,7 +42,7 @@ pub async fn init_axum(from_api:  mpsc::Sender<MainMsg>, to_api: mpsc::Receiver<
 
         tokio::spawn(web_sock_coord::web_sock_coord(to_api, rx_ws_coord));
 
-        let app = Router::new()
+        let protected_router = Router::new()
             .merge(router::node::node_router())
             .merge(router::devices::devices_router())
             .merge(router::value::values_router())
@@ -39,6 +51,13 @@ pub async fn init_axum(from_api:  mpsc::Sender<MainMsg>, to_api: mpsc::Receiver<
             .merge(router::user_group::user_group_router())
             .merge(router::user_subgroups::user_subgroup_router())
             .merge(router::assign::assign_router())
+
+            .layer(middleware::from_fn(auth_middleware));
+
+
+        let app = Router::new()
+            .merge(protected_router)
+            .merge(router::auth::auth())
             .merge(router::root::root())
             .merge(live_router()) // "/live_data"
             .with_state(app_state)

@@ -1,23 +1,15 @@
-use std::clone;
 use tokio::sync::mpsc;
 use crate::messages::requests::node_request::{GetAllNodes, GetByIp, NodeRequest};
 use tokio::sync::oneshot;
-use crate::db::schemas::node::{NodeCreate, NodeRead};
+use crate::db::schemas::node::{NodeRead};
 use crate::logger::printers;
 use tokio::sync::broadcast;
-use std::collections::HashMap;
-use std::ops::Deref;
-use std::sync::Arc;
 use std::time::Duration;
 use sqlx::__rt::sleep;
-use tokio::task::JoinHandle;
 use crate::messages::{
     main_msg::MainMsg,
-    events::event::Event,
     requests::request_struct::Request,
-    commands::command::{Command, CommandType}
 };
-use crate::messages::commands::node::NodeCommand;
 use crate::messages::config_event::{ConfigEvent, ConfigEventType};
 use crate::reader::reader_loop::reading_loop::read_master::node_loop;
 
@@ -25,7 +17,7 @@ pub async fn node_master(from_controller: mpsc::Receiver<ConfigEvent>, to_contro
     printers::event(String::from("Старт опитувача"));
     let mut from_controller = from_controller;
 
-    let (mut to_node_tx, mut from_node_rx, from_node_tx) = init_nodes(&to_controller).await;
+    let (to_node_tx, mut from_node_rx, from_node_tx) = init_nodes(&to_controller).await;
 
     loop {
         tokio::select! {

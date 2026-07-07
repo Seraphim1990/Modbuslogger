@@ -2,10 +2,9 @@ use std::sync::Arc;
 use crate::messages::requests::value_request::*;
 use crate::db::schemas::value_unit::{ValueCreate, ValueDelete, ValueRead, ValueUpdate};
 use crate::logger::printers;
-use sqlx::{FromRow, MySql, Pool, Transaction};
+use sqlx::{FromRow, MySql, Pool};
 use tokio::sync::mpsc;
 use crate::db::schemas::node::NodeRead;
-use crate::db::worker::node_worker::get_node_by_id;
 use crate::messages::commands::command::{Command, CommandType};
 use crate::messages::commands::value::ValueCommand;
 use crate::messages::config_event::{ConfigEvent, ConfigEventType};
@@ -88,9 +87,6 @@ pub fn value_get(pool: &Pool<MySql>, request: ValueRequest) {
                     printers::err(String::from("Помилка відправки ValueRequest::GetAll"));
                 }
             });
-        },
-        ValueRequest::GetByGroup(request) => {
-            unimplemented!();
         },
         ValueRequest::GetLoggingOnly(request) => {
             tokio::spawn(async move {
@@ -328,7 +324,7 @@ async fn create_value(pool: &Pool<MySql>, value: &ValueCreate, tx_to_reader: mps
 }
 #[derive(Debug, FromRow)]
 struct ReadVal{
-    id: i32,
+    _id: i32,
     decoding_type: i32
 }
 

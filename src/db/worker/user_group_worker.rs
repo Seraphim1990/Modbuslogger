@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use sqlx::{MySql, Pool};
 use crate::messages::commands::{
@@ -5,7 +6,7 @@ use crate::messages::commands::{
     groups::GroupCommand
 };
 use crate::logger::printers;
-use crate::db::schemas::user_groups::{UserGroupCreate, UserGroupRead, UserGroupUpdate, UserGroupDelete, UiUserGroupRead, UiUserSubGroupsRead};
+use crate::db::schemas::user_groups::{UserGroupCreate, UserGroupRead, UserGroupUpdate, UiUserGroupRead, UiUserSubGroupsRead};
 use crate::messages::requests::group_request::GroupRequest;
 
 pub fn group_command(pool: &Pool<MySql>, command: Command){
@@ -172,13 +173,14 @@ async fn delete_group(pool: &Pool<MySql>, group_id: i32) -> Result<(), String> {
 // UI block
 
 use crate::db::schemas::value_unit::ValueRead;
+/*
 async fn ui_get_group(pool: &Pool<MySql>, id: i32) -> Result<Option<UiUserGroupRead>, ()> {
 
     let subgroups = crate::db::worker::user_sub_group_workers::get_by_group_id(pool, id).await?; // костиль, потом поправлю!!
 
     if subgroups.is_empty() { return Ok(None) }
 
-    let mut res = UiUserGroupRead { id, sub_groups: Vec::new() };
+    let mut res = UiUserGroupRead { id, sub_groups: Vec::new(), nodes: Vec::new(), devices: Vec::new() };
 
     for subgroup in subgroups.into_iter() {
         let grouped_values = sqlx::query_as::<_, ValueRead>
@@ -200,5 +202,145 @@ async fn ui_get_group(pool: &Pool<MySql>, id: i32) -> Result<Option<UiUserGroupR
             }
         )
     }
+    Ok(Some(res))
+}
+
+ */
+#[derive(sqlx::FromRow)]
+struct ValueWithSubgroup {
+    subgroup_id: i32,
+
+    id: i32,
+    parent_device_id: i32,
+    value_name: Option<String>,
+    value_tag: String,
+    description: Option<String>,
+    decoding_type: i32,
+    settings: serde_json::Value,
+    is_logging: bool,
+
+    node_id: Option<i32>,
+}
+pub async fn ui_get_group(
+    pool: &Pool<MySql>,
+    id: i32,
+) -> Result<Option<UiUserGroupRead>, ()> {
+
+    let subgroups =
+        crate::db::worker::user_sub_group_workers::get_by_group_id(pool, id)
+            .await?;
+
+    if subgroups.is_empty() {
+        return Ok(None);
+    }
+
+    let subgroup_ids: Vec<i32> =
+        subgroups.iter().map(|x| x.id).collect();
+
+    let placeholders =
+        std::iter::repeat("?")
+            .take(subgroup_ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+
+    let sql = format!(
+        "
+        SELECT
+            sgv.subgroup_id,
+
+            vu.id,
+            vu.parent_device_id,
+            vu.value_name,
+            vu.value_tag,
+            vu.description,
+            vu.decoding_type,
+            vu.settings,
+            vu.is_logging,
+
+            d.parent_node_id as node_id
+
+        FROM subgroup_values sgv
+
+        INNER JOIN value_units vu
+            ON vu.id = sgv.value_unit_id
+
+        INNER JOIN devices d
+            ON d.id = vu.parent_device_id
+
+        WHERE sgv.subgroup_id IN ({})
+        ",
+        placeholders
+    );
+
+    let mut query =
+        sqlx::query_as::<_, ValueWithSubgroup>(&sql);
+
+    for subgroup_id in &subgroup_ids {
+        query = query.bind(subgroup_id);
+    }
+
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            printers::err(format!(
+                "Помилка отримання значень групи: {}",
+                e
+            ));
+        })?;
+
+    let mut values_by_subgroup:
+        HashMap<i32, Vec<ValueRead>> = HashMap::new();
+
+    let mut devices = HashSet::<i32>::new();
+    let mut nodes = HashSet::<i32>::new();
+
+    for row in rows {
+
+        devices.insert(row.parent_device_id);
+
+        if let Some(node_id) = row.node_id {
+            nodes.insert(node_id);
+        }
+
+        let value = ValueRead {
+            id: row.id,
+            parent_device_id: row.parent_device_id,
+            value_name: row.value_name.unwrap_or("".to_string()),
+            value_tag: row.value_tag,
+            description: row.description,
+            decoding_type: row.decoding_type,
+            settings: row.settings,
+            is_logging: row.is_logging,
+        };
+
+        values_by_subgroup
+            .entry(row.subgroup_id)
+            .or_default()
+            .push(value);
+    }
+
+    let mut res = UiUserGroupRead {
+        id,
+        sub_groups: Vec::new(),
+        nodes: nodes.into_iter().collect(),
+        devices: devices.into_iter().collect(),
+    };
+
+    for subgroup in subgroups {
+
+        let values =
+            values_by_subgroup
+                .remove(&subgroup.id)
+                .unwrap_or_default();
+
+        res.sub_groups.push(
+            UiUserSubGroupsRead {
+                group_state: subgroup,
+                values,
+            }
+        );
+    }
+
     Ok(Some(res))
 }

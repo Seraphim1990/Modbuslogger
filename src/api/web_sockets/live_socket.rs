@@ -7,14 +7,17 @@ use axum::{
     routing::get,
     Router,
 };
-use serde::{Deserialize, Serialize};
 use crate::logger::printers;
 use std::time::Duration;
+use axum::extract::Query;
+use axum::http::StatusCode;
+use jsonwebtoken::{decode, DecodingKey, Validation};
+use serde::Deserialize;
 use tokio::time::{sleep, timeout};
 
 
 
-use crate::api::init_axum::AppState;
+use crate::api::init_axum::{AppState, Claims, JWT_KEY};
 use tokio::sync::mpsc;
 use crate::api::web_sockets::live_socket_unit::CoordUnitWebSocketData;
 
@@ -24,15 +27,31 @@ pub fn live_router() -> Router<AppState> {
         .route("/live_data", get(ws_handler))
 }
 
+#[derive(Deserialize)]
+pub struct WsParams {
+    token: Option<String>,
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
+    Query(params): Query<WsParams>, // Axum автоматично дістає ?token= із запиту
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_socket(socket, state))
+
+    if let Some(token_str) = params.token {
+        if let Ok(_) = decode::<Claims>(
+            token_str,
+            &DecodingKey::from_secret(JWT_KEY),
+            &Validation::default(), // Перевіряє exp і iat автоматично
+        ){
+            return ws.on_upgrade(move |socket| handle_socket(socket, state));
+        }
+    }
+    StatusCode::UNAUTHORIZED.into_response()
 }
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
-    let (_, mut receiver) = mpsc::channel(10);
+    let mut receiver;
 
     let duration = Duration::from_secs(30);
 
@@ -59,8 +78,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         }
     }
 
-    printers::event("Отримано нове вебсокет підключення".to_string());
-
+    let timer = sleep(Duration::from_secs(900));
+    tokio::pin!(timer);
     loop {
         tokio::select! {
             msg = socket.recv() => {
@@ -74,7 +93,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                         }
                     },
                     _ => {
-                        printers::event("Сокет закрив з'єднання".to_string());
                         break;
                     },
                     }
@@ -89,6 +107,9 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     },
                     None => break, // канал упав
                 }
+            }
+            _ = &mut timer => { // розрив зьєднання для отримання нового токену і перепідключення
+                break;
             }
         }
     }

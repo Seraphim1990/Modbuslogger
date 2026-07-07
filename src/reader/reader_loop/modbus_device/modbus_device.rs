@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::schemas::device::DeviceRead;
@@ -8,7 +7,7 @@ use crate::reader::reader_loop::modbus_device::pool_iterator::{PollValueIterator
 
 pub struct ModbusDeviceUnit {
     id: i32,
-    name: String,
+    _name: String,
     address: i32,
     time_for_recall: i32,
     timeout: u64,
@@ -29,7 +28,7 @@ impl ModbusDeviceUnit {
 
         ModbusDeviceUnit {
             id: setting.id,
-            name: setting.device_name.unwrap_or_else(|| "".to_string()),
+            _name: setting.device_name.unwrap_or_else(|| "".to_string()),
             address: setting.address,
             timeout: setting.timeout as u64,
             time_for_recall: setting.time_for_recall,
@@ -63,10 +62,6 @@ impl ModbusDeviceUnit {
     pub fn total_steps(&self) -> usize {
         self.value_pool.total_steps()
     }
-    
-    pub fn contains_value_id(&self, value_id: i32) -> bool {
-        self.value_pool.contains_value_id(value_id)
-    }
 
     pub fn retry_count(&self) -> i32 {
         self.retry_count
@@ -75,7 +70,7 @@ impl ModbusDeviceUnit {
     pub fn set_values(&mut self, values: Vec<ValueRead>){
         self.value_pool.init(values, self.read_by_group);
     }
-    pub fn get_pool(&self) -> PoolValueRefIterator {
+    pub fn get_pool(&self) -> PoolValueRefIterator<'_> {
         self.value_pool.into_iter()
     }
     pub fn finished(&mut self) {
@@ -88,8 +83,5 @@ impl ModbusDeviceUnit {
         self.next_read_at
     }
 
-    pub fn set_when_next(&mut self, when: u64) {
-        self.next_read_at = when;
-    }
 }
 
